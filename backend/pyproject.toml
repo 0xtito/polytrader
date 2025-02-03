@@ -1,0 +1,55 @@
+[project]
+name = "polytrader-agent"
+version = "0.0.1"
+description = "An agent that trades on Polymarket"
+authors = [
+    { name = "tito", email = "92818759+0xtito@users.noreply.github.com" },
+]
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+dependencies = [
+    "langgraph>=0.2.69",
+    "langchain-openai>=0.3.2",
+    "langchain-anthropic>=0.3.4",
+    "langchain>=0.3.17",
+    "langchain-fireworks>=0.2.7",
+    "python-dotenv>=1.0.1",
+    "langchain-community>=0.3.16",
+    "websockets>=14.2",
+]
+
+[project.optional-dependencies]
+dev = ["mypy>=1.11.1", "ruff>=0.6.1", "pytest-asyncio"]
+
+[build-system]
+requires = ["setuptools>=73.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["polytrader_agent"]
+[tool.setuptools.package-dir]
+"polytrader_agent" = "src/polytrader_agent"
+"langgraph.templates.polytrader_agent" = "src/polytrader_agent"
+
+
+[tool.setuptools.package-data]
+"*" = ["py.typed"]
+
+[tool.ruff]
+lint.select = [
+    "E",    # pycodestyle
+    "F",    # pyflakes
+    "I",    # isort
+    "D",    # pydocstyle
+    "D401", # First line should be in imperative mood
+    "T201",
+    "UP",
+]
+include = ["*.py", "*.pyi", "*.ipynb"]
+lint.ignore = ["UP006", "UP007", "UP035", "D417", "E501"]
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["D", "UP"]
+"ntbk/*" = ["D", "UP", "T201"]
+[tool.ruff.lint.pydocstyle]
+convention = "google"

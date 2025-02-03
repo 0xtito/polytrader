@@ -1,0 +1,20 @@
+Metadata-Version: 2.2
+Name: polytrader-agent
+Version: 0.0.1
+Summary: An agent that trades on Polymarket
+Author-email: tito <92818759+0xtito@users.noreply.github.com>
+License: MIT
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: langgraph>=0.2.69
+Requires-Dist: langchain-openai>=0.3.2
+Requires-Dist: langchain-anthropic>=0.3.4
+Requires-Dist: langchain>=0.3.17
+Requires-Dist: langchain-fireworks>=0.2.7
+Requires-Dist: python-dotenv>=1.0.1
+Requires-Dist: langchain-community>=0.3.16
+Requires-Dist: websockets>=14.2
+Provides-Extra: dev
+Requires-Dist: mypy>=1.11.1; extra == "dev"
+Requires-Dist: ruff>=0.6.1; extra == "dev"
+Requires-Dist: pytest-asyncio; extra == "dev"
