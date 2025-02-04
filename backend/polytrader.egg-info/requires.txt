@@ -6,6 +6,9 @@ langchain-fireworks>=0.2.7
 python-dotenv>=1.0.1
 langchain-community>=0.3.16
 websockets>=14.2
+py-order-utils>=0.3.2
+py-clob-client>=0.20.0
+web3>=7.5.0
 
 [dev]
 mypy>=1.11.1

@@ -1,7 +1,8 @@
 {
   "dependencies": ["."],
   "graphs": {
-    "agent": "./src/graph.py:graph"
+    "polytrader": "./src/polytrader/graph.py:graph"
   },
-  "env": ".env"
+  "python_version": "3.11",
+  "env": "../.env"
 }

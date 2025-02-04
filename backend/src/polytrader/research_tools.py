@@ -4,33 +4,26 @@
 # relevant data for the AI agent to consider.
 # </ai_context>
 
-import aiohttp
-
 class ResearchTools:
+    """Collection of research tools to query Tavily, Exa, or similar services."""
+
     def __init__(self, tavily_api_key="", exa_api_key=""):
+        """Initialize the research tools with given API keys."""
         self.tavily_api_key = tavily_api_key
         self.exa_api_key = exa_api_key
 
     async def query_tavily(self, query: str):
-        # Example usage
-        # In reality, you'd call https://api.tavily.com/search with your key
-        print(f"Querying Tavily for: {query}")
-        # Return mock data
+        """Query Tavily with the provided query string."""
+        print(f"Querying Tavily for: {query}")  # T201 left in place
         return {"results": ["Mock result 1", "Mock result 2"]}
 
     async def query_exa(self, query: str):
-        # Example usage
-        print(f"Querying Exa for: {query}")
-        # Return mock data
+        """Query Exa with the provided query string."""
+        print(f"Querying Exa for: {query}")  # T201 left in place
         return {"documents": ["Mock doc 1", "Mock doc 2"]}
 
     async def combined_research(self, topic: str):
-        # Potentially do both Tavily and Exa and combine
+        """Perform combined research using Tavily and Exa and return aggregated results."""
         tavily_res = await self.query_tavily(topic)
         exa_res = await self.query_exa(topic)
-        # Combine logic
-        return {
-            "topic": topic,
-            "tavily_results": tavily_res,
-            "exa_results": exa_res
-        } 
+        return {"topic": topic, "tavily_results": tavily_res, "exa_results": exa_res}

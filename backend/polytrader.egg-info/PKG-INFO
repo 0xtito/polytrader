@@ -1,5 +1,5 @@
 Metadata-Version: 2.2
-Name: polytrader-agent
+Name: polytrader
 Version: 0.0.1
 Summary: An agent that trades on Polymarket
 Author-email: tito <92818759+0xtito@users.noreply.github.com>
@@ -14,6 +14,9 @@ Requires-Dist: langchain-fireworks>=0.2.7
 Requires-Dist: python-dotenv>=1.0.1
 Requires-Dist: langchain-community>=0.3.16
 Requires-Dist: websockets>=14.2
+Requires-Dist: py-order-utils>=0.3.2
+Requires-Dist: py-clob-client>=0.20.0
+Requires-Dist: web3>=7.5.0
 Provides-Extra: dev
 Requires-Dist: mypy>=1.11.1; extra == "dev"
 Requires-Dist: ruff>=0.6.1; extra == "dev"
