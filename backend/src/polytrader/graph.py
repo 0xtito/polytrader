@@ -6,12 +6,14 @@
 # 3) Analyze external info (Tavily, Exa)
 # 4) Reflect on external info
 # 5) Make a trade decision (using the LLM)
+# 5B) Assess confidence
 # 6) Reflect on the decision
 # 7) End or loop back as needed
 #
 # </ai_context>
 
 import ast
+import json
 import time
 from typing import Any, Dict, Literal
 
@@ -31,7 +33,7 @@ from polytrader.polymarket import Polymarket
 
 # Our new state, configuration, and tools
 from polytrader.state import InputState, OutputState, State
-from polytrader.tools import scrape_website, search_tavily, structure_research
+from polytrader.tools import search_exa, search_tavily 
 
 ###############################################################################
 # Global references
@@ -52,9 +54,6 @@ async def fetch_market_data(state: State) -> Dict[str, Any]:
     state.loop_step += 1
     market_id = state.market_id
 
-    markets_json = gamma_client.get_current_markets(1)
-    market_json = markets_json[0]
-
     if market_id is None:
         return {
             "messages": ["No market_id provided; skipping market data fetch."],
@@ -62,8 +61,10 @@ async def fetch_market_data(state: State) -> Dict[str, Any]:
         }
 
     # Use GammaMarketClient to fetch data
-    # market_json = gamma_client.get_market(market_id)
+    market_json = gamma_client.get_market(market_id)
     state.market_data = market_json  # raw dict
+    print("Raw market data as json:")
+    print(json.dumps(market_json, indent=2))
     return {
         "messages": [f"Fetched market data for ID={market_id}."],
         "proceed": True,
@@ -92,37 +93,69 @@ async def reflect_on_market_data(state: State) -> Dict[str, Any]:
 
 
 ###############################################################################
-# 3. Node: Analyze External Info (Tavily + scraping)
+# 3. Node: Analyze External Info (Tavily)
 ###############################################################################
 async def analyze_external_info(state: State) -> Dict[str, Any]:
-    """Use an external research tool (Tavily) to gather data, then scrape the top result."""
+    """Use Tavily and Exa to gather research data about the market."""
     state.loop_step += 1
 
-    query = "Polymarket " + (
+    query = (
         state.market_data.get("question", "Generic search") if state.market_data else ""
     )
-    results = await search_tavily(query, max_results=config.max_search_results)
-    if not results:
+    
+    # Get Tavily results
+    tavily_results = await search_tavily(query, max_results=config.max_search_results)
+    if not tavily_results:
         return {
             "messages": [f"Tavily returned no search results for query: {query}"],
             "proceed": False,
         }
-
-    first_url = results[0].get("link", "")
-    if not first_url:
+    
+    # Get Exa results
+    exa_results = search_exa(query, max_results=config.max_search_results)
+    if not exa_results:
         return {
-            "messages": ["No valid link in the top search result."],
+            "messages": [f"Exa returned no search results for query: {query}"],
             "proceed": False,
         }
-
-    scraped_content = await scrape_website(first_url)
-    structured = structure_research(scraped_content, state.extraction_schema)
+    
+    # Structure the combined research data
+    structured = {
+        # Tavily data - now handling list structure
+        "tavily": {
+            "results": [
+                {
+                    "title": result.get("title", ""),
+                    "url": result.get("url", ""),
+                    "content": result.get("content", ""),
+                    "score": result.get("score", 0)
+                }
+                for result in tavily_results  # Direct list iteration
+            ]
+        },
+        # Exa data
+        "exa": {
+            "results": exa_results
+        },
+        # Combined summary from both sources (using the first result from each)
+        "summary": (
+            (tavily_results[0].get("content", "") if tavily_results else "") +
+            "\n\n" +
+            (exa_results[0]["text"] if exa_results else "")
+        ),
+        # Combined source links from both services
+        "source_links": (
+            [result.get("url", "") for result in tavily_results if result.get("url")] +
+            [result["url"] for result in exa_results if result["url"]]
+        )
+    }
+    
     state.external_research = structured
 
     return {
         "messages": [
             f"Analyzed external info with query='{query}'.",
-            f"Scraped URL: {first_url}",
+            f"Found {len(structured['tavily']['results'])} Tavily results and {len(structured['exa']['results'])} Exa results.",
         ],
         "external_research": structured,
         "proceed": True,
@@ -157,7 +190,7 @@ async def decide_trade(state: State) -> Dict[str, Any]:
     market_data_str = str(state.market_data)
     external_info_str = str(state.external_research)
 
-    prompt = [
+    messages = [
         SystemMessage(
             content="You are a Polymarket trading AI. You have market data and external research."
         ),
@@ -170,8 +203,8 @@ async def decide_trade(state: State) -> Dict[str, Any]:
             )
         ),
     ]
-    response = await llm.apredict(prompt)
-    decision_text = response.strip().upper()
+    response = await llm.achat(messages)
+    decision_text = response.content.strip().upper()
 
     if "BUY" in decision_text:
         state.trade_decision = "BUY YES"
@@ -183,6 +216,44 @@ async def decide_trade(state: State) -> Dict[str, Any]:
     return {
         "messages": [f"LLM suggests decision: {state.trade_decision}"],
         "trade_decision": state.trade_decision,
+        "proceed": True,
+    }
+
+
+###############################################################################
+# 5B. Node: Assess Confidence
+###############################################################################
+async def assess_confidence(state: State) -> Dict[str, Any]:
+    """
+    Use the LLM to produce a confidence score for the trade decision.
+    We'll parse out a floating-point number in [0, 1].
+    """
+    # Provide market data, external research, and the proposed decision
+    # Prompt the LLM to return a numeric confidence rating (0.0 to 1.0)
+    prompt = [
+        SystemMessage(
+            content="You are a confidence estimator for a Polymarket agent. Return a single float in [0.0, 1.0]."
+        ),
+        HumanMessage(
+            content=(
+                f"Market data: {state.market_data}\n\n"
+                f"External research: {state.external_research}\n\n"
+                f"Trade decision: {state.trade_decision}\n\n"
+                "Based on your knowledge and the provided information, how confident are you "
+                "in this trade decision (0.0 to 1.0)? Return numeric value only."
+            )
+        ),
+    ]
+    try:
+        response = await llm.apredict(prompt)
+        confidence_val = float(response.strip())
+    except Exception:
+        # If parse fails or LLM returns something unexpected, set a default
+        confidence_val = 0.5
+
+    state.confidence = confidence_val
+    return {
+        "messages": [f"Assessed confidence: {confidence_val:.2f}"],
         "proceed": True,
     }
 
@@ -276,8 +347,19 @@ def route_after_external_reflection(
         return "decide_trade"
 
 
-def route_after_decision(state: State) -> Literal["reflect_on_decision"]:
+def route_after_decision(state: State) -> Literal["assess_confidence"]:
     """Route after deciding a trade action."""
+    return "assess_confidence"
+
+
+def route_after_confidence(state: State) -> Literal["reflect_on_decision", "fetch_market_data"]:
+    """
+    If confidence >= 0.6, proceed with reflection and potential trade.
+    Otherwise, loop back to fetch_market_data (or end).
+    """
+    if state.confidence is None or state.confidence < 0.6:
+        # We can skip or re-fetch. We'll refetch in this example.
+        return "fetch_market_data"
     return "reflect_on_decision"
 
 
@@ -307,6 +389,7 @@ workflow.add_node(reflect_on_market_data)
 workflow.add_node(analyze_external_info)
 workflow.add_node(reflect_on_external_info)
 workflow.add_node(decide_trade)
+workflow.add_node(assess_confidence)  # new node
 workflow.add_node(reflect_on_decision)
 
 # Edges
@@ -318,6 +401,7 @@ workflow.add_conditional_edges(
     "reflect_on_external_info", route_after_external_reflection
 )
 workflow.add_conditional_edges("decide_trade", route_after_decision)
+workflow.add_conditional_edges("assess_confidence", route_after_confidence)
 workflow.add_conditional_edges("reflect_on_decision", route_after_decision_reflection)
 
 # Compile
