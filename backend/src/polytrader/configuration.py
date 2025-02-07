@@ -6,6 +6,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, fields
 from typing import Optional
+from typing_extensions import Annotated
+
+from langchain_core.runnables import RunnableConfig, ensure_config
 
 """
 This configuration pattern is inspired by typical dataclass-based agent settings.
@@ -20,15 +23,16 @@ class Configuration:
     Extend or customize as needed.
     """
 
-    model: str = field(
-        default="gpt-4",
+    model: Annotated[str, {"__template_metadata__": {"kind": "llm"}}] = field(
+        default="openai/o3-mini",
         metadata={
-            "description": "The name of the language model to use for the agent. Example: openai/gpt-4"
+            "description": "The name of the language model to use for the agent. "
+            "Should be in the form: provider/model-name."
         },
     )
 
     temperature: float = field(
-        default=0.0,
+        default=0.5,
         metadata={
             "description": "Temperature for the LLM; controls randomness in output."
         },
@@ -54,3 +58,13 @@ class Configuration:
             "description": "Maximum number of iteration loops allowed in the graph before termination."
         },
     )
+
+    @classmethod
+    def from_runnable_config(
+        cls, config: Optional[RunnableConfig] = None
+    ) -> Configuration:
+        """Load configuration w/ defaults for the given invocation."""
+        config = ensure_config(config)
+        configurable = config.get("configurable") or {}
+        _fields = {f.name for f in fields(cls) if f.init}
+        return cls(**{k: v for k, v in configurable.items() if k in _fields})
