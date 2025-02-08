@@ -20,7 +20,10 @@ class InputState:
     extraction_schema: dict[str, Any] = field(
         default_factory=lambda: {"headline": "", "summary": "", "source_links": []}
     )
-
+    external_research_info: Optional[dict[str, Any]] = field(default=None)
+    """
+    Tracks the current state of the external research fetched by the agent.
+    """
 
 @dataclass(kw_only=True)
 class State(InputState):
@@ -32,9 +35,15 @@ class State(InputState):
     external_research: Optional[dict[str, Any]] = None
     trade_decision: Optional[str] = None
 
+    # Additional fields for storing agent outputs
+    analysis_info: Optional[dict[str, Any]] = None
+    trade_info: Optional[dict[str, Any]] = None
+
+    confidence: Optional[float] = None
+
 
 @dataclass(kw_only=True)
 class OutputState:
     """This is the final output after the graph completes."""
 
-    info: dict[str, Any]
+    external_research_info: dict[str, Any]

@@ -10,6 +10,8 @@ from typing_extensions import Annotated
 
 from langchain_core.runnables import RunnableConfig, ensure_config
 
+from polytrader import prompts
+
 """
 This configuration pattern is inspired by typical dataclass-based agent settings.
 Users can adjust these parameters at runtime or in environment variables.
@@ -35,6 +37,30 @@ class Configuration:
         default=0.5,
         metadata={
             "description": "Temperature for the LLM; controls randomness in output."
+        },
+    )
+
+    research_agent_prompt: str = field(
+        default=prompts.RESEARCH_AGENT_PROMPT,
+        metadata={
+            "description": "The main prompt template to use for the research sub-agent. "
+            "Expects f-string arguments like {info}, {market_data}, {question}, {description}, {outcomes}."
+        },
+    )
+
+    # Added for the analysis sub-agent
+    analysis_agent_prompt: str = field(
+        default=prompts.ANALYSIS_AGENT_PROMPT,
+        metadata={
+            "description": "The prompt template for the analysis sub-agent."
+        },
+    )
+
+    # Added for the trade sub-agent
+    trade_agent_prompt: str = field(
+        default=prompts.TRADE_AGENT_PROMPT,
+        metadata={
+            "description": "The prompt template for the trade sub-agent."
         },
     )
 
