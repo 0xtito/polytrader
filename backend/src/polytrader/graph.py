@@ -26,10 +26,13 @@ from polytrader.gamma import GammaMarketClient
 from polytrader.polymarket import Polymarket
 from polytrader.state import InputState, OutputState, State
 from polytrader.tools import (
+    get_market_details,
+    get_orderbook_analysis,
     search_exa,
     search_tavily,
     market_details_tool,
     orderbook_analysis_tool,
+    trade,
     trade_tool,
 )
 from polytrader.utils import init_model
@@ -263,7 +266,7 @@ async def analysis_agent_node(
     # Define the 'AnalysisInfo' tool for finalizing analysis
     analysis_info_tool = {
         "name": "AnalysisInfo",
-        "description": "Call this when you have completed your analysis. Provide a summary, confidence (0-1), and any sources used.",
+        "description": "Call this when you have completed your analysis. Provide a summary, confidence (0-1), and all information you gathered from polymarket.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -679,8 +682,8 @@ workflow.add_conditional_edges("reflect_on_research", route_after_reflect_on_res
 
 # Analysis
 workflow.add_node("analysis_tools", ToolNode([
-    market_details_tool,
-    orderbook_analysis_tool["func"]
+    get_market_details,
+    get_orderbook_analysis
 ]))
 workflow.add_node("analysis_agent", analysis_agent_node)
 workflow.add_node("reflect_on_analysis", reflect_on_analysis_node)
@@ -690,7 +693,7 @@ workflow.add_conditional_edges("reflect_on_analysis", route_after_reflect_on_ana
 
 # Trade
 workflow.add_node("trade_tools", ToolNode([
-    trade_tool["func"]
+    trade
 ]))
 workflow.add_node("trade_agent", trade_agent_node)
 workflow.add_node("reflect_on_trade", reflect_on_trade_node)

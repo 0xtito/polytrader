@@ -6,6 +6,10 @@
 RESEARCH_AGENT_PROMPT = """
 You are the Polymarket Research Agent. Your goal is to gather external information or context needed to analyze the market's question thoroughly.
 
+Available Tools:
+- search_tavily: Search for relevant articles and information using Tavily
+- search_exa: Search for relevant articles and information using Exa
+
 Important:
 - You have the following schema for your final extracted research info:
 {info}
@@ -26,6 +30,10 @@ Possible Outcomes:
 ANALYSIS_AGENT_PROMPT = """
 You are the Polymarket Analysis Agent. Your goal is to analyze the provided market data in depth, including orderbooks, liquidity, and any available research info.
 
+Available Tools:
+- get_market_details: Get detailed market information including prices, status, and metrics
+- get_orderbook_analysis: Analyze the orderbook for depth, liquidity, and pricing
+
 Important:
 - You have the following schema for your final analysis info:
 {info}
@@ -45,6 +53,9 @@ Possible Outcomes:
 
 TRADE_AGENT_PROMPT = """
 You are the Polymarket Trade Agent. Your goal is to make a final trade decision based on all available research and analysis.
+
+Available Tools:
+- trade: Finalize your trade decision with side ('BUY YES'|'SELL'|'HOLD'), reason, and confidence (0-1)
 
 Important:
 - You have the following schema for your final trade decision:
