@@ -2,38 +2,41 @@
 # This file implements a stateful graph for the Polymarket AI agent using LangGraph.
 # It orchestrates the following steps:
 # 1) Fetch/refresh market data
-# 2) Reflect on market data
-# 3) Analyze external info (Tavily, Exa)
-# 4) Reflect on external info
-# 5) Make a trade decision (using the LLM)
-# 5B) Assess confidence
-# 6) Reflect on the decision
-# 7) End or loop back as needed
-#
+# 2) Conduct external research with a dedicated "research_agent" node
+# 3) Reflect on whether more research is needed or we can proceed
+# 4) Conduct market analysis (get market details, orderbook analysis)
+# 5) Reflect on whether we need more analysis or can proceed
+# 6) Possibly finalize a trade
+# 7) Reflect on trade decision or loop back
+# 8) End
 # </ai_context>
 
-import ast
 import json
-import time
-from typing import Any, Dict, Literal
+from typing import Any, Dict, List, Literal, Optional, cast
 
-from langchain.schema import HumanMessage, SystemMessage
-
-# Use the recommended import from langchain_community
-from langchain_community.chat_models import ChatOpenAI
-
-# langgraph imports
+from langchain.schema import AIMessage, BaseMessage, SystemMessage, HumanMessage
+from langchain_core.messages import ToolMessage
+from langchain_core.runnables import RunnableConfig
 from langgraph.graph import StateGraph
+from langgraph.prebuilt import ToolNode
+from pydantic import BaseModel, Field
 
 from polytrader.configuration import Configuration
-
-# Polymarket
 from polytrader.gamma import GammaMarketClient
 from polytrader.polymarket import Polymarket
-
-# Our new state, configuration, and tools
 from polytrader.state import InputState, OutputState, State
-from polytrader.tools import search_exa, search_tavily 
+from polytrader.tools import (
+    analysis_get_external_news,
+    analysis_get_market_trades,
+    search_exa,
+    search_tavily,
+    trade,
+    analysis_get_market_details,
+    analysis_get_multi_level_orderbook,
+    analysis_get_historical_trends,
+    # analysis_get_external_news,  # REMOVED from analysis agent
+)
+from polytrader.utils import init_model
 
 ###############################################################################
 # Global references
@@ -41,16 +44,14 @@ from polytrader.tools import search_exa, search_tavily
 gamma_client = GammaMarketClient()
 poly_client = Polymarket()
 
-# Create a default config. Real usage might override via environment or a constructor.
-config = Configuration()
-llm = ChatOpenAI(model_name=config.model, temperature=config.temperature)
-
-
 ###############################################################################
-# 1. Node: Fetch Market Data
+# Node: Fetch Market Data
 ###############################################################################
 async def fetch_market_data(state: State) -> Dict[str, Any]:
-    """Fetch or refresh data from Gamma about the specified market_id."""
+    """
+    Fetch or refresh data from Gamma about the specified market_id.
+    Store raw JSON in state.market_data for downstream usage.
+    """
     state.loop_step += 1
     market_id = state.market_id
 
@@ -60,7 +61,6 @@ async def fetch_market_data(state: State) -> Dict[str, Any]:
             "proceed": False,
         }
 
-    # Use GammaMarketClient to fetch data
     market_json = gamma_client.get_market(market_id)
     state.market_data = market_json  # raw dict
     print("Raw market data as json:")
@@ -71,338 +71,763 @@ async def fetch_market_data(state: State) -> Dict[str, Any]:
         "market_data": market_json,
     }
 
+###### RESEARCH ####### 
 
 ###############################################################################
-# 2. Node: Reflect on Market Data
+# Node: Research Agent
 ###############################################################################
-async def reflect_on_market_data(state: State) -> Dict[str, Any]:
-    """Check if the market data is good enough to proceed or if we need to refetch/stop."""
-    if not state.market_data:
-        return {
-            "messages": ["No market data found. Need to re-fetch."],
-            "proceed": False,
-        }
-    if "question" not in state.market_data:
-        return {
-            "messages": [
-                "Market data doesn't have a question field. Might be incomplete."
-            ],
-            "proceed": False,
-        }
-    return {"messages": ["Market data looks sufficient."], "proceed": True}
+async def research_agent_node(
+    state: State, *, config: Optional[RunnableConfig] = None
+) -> Dict[str, Any]:
+    """
+    Sub-agent dedicated to external research only.
+    This node generates the research strategy and interprets results.
+    """
+    # Load configuration
+    configuration = Configuration.from_runnable_config(config)
 
-
-###############################################################################
-# 3. Node: Analyze External Info (Tavily)
-###############################################################################
-async def analyze_external_info(state: State) -> Dict[str, Any]:
-    """Use Tavily and Exa to gather research data about the market."""
-    state.loop_step += 1
-
-    query = (
-        state.market_data.get("question", "Generic search") if state.market_data else ""
-    )
-    
-    # Get Tavily results
-    tavily_results = await search_tavily(query, max_results=config.max_search_results)
-    if not tavily_results:
-        return {
-            "messages": [f"Tavily returned no search results for query: {query}"],
-            "proceed": False,
-        }
-    
-    # Get Exa results
-    exa_results = search_exa(query, max_results=config.max_search_results)
-    if not exa_results:
-        return {
-            "messages": [f"Exa returned no search results for query: {query}"],
-            "proceed": False,
-        }
-    
-    # Structure the combined research data
-    structured = {
-        # Tavily data - now handling list structure
-        "tavily": {
-            "results": [
-                {
-                    "title": result.get("title", ""),
-                    "url": result.get("url", ""),
-                    "content": result.get("content", ""),
-                    "score": result.get("score", 0)
+    # Define the 'Info' tool, which is the user-defined extraction schema
+    external_research_info_tool = {
+        "name": "ExternalResearchInfo",
+        "description": "Call this when you have gathered sufficient research from the web on the market's subject. This will be used to update the info you have about the topic.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "research_summary": {
+                    "type": "string",
+                    "description": "A comprehensive summary of the research findings"
+                },
+                "confidence": {
+                    "type": "number",
+                    "description": "Confidence level in the research findings (0-1)"
+                },
+                "sources": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of sources used in research"
                 }
-                for result in tavily_results  # Direct list iteration
-            ]
-        },
-        # Exa data
-        "exa": {
-            "results": exa_results
-        },
-        # Combined summary from both sources (using the first result from each)
-        "summary": (
-            (tavily_results[0].get("content", "") if tavily_results else "") +
-            "\n\n" +
-            (exa_results[0]["text"] if exa_results else "")
-        ),
-        # Combined source links from both services
-        "source_links": (
-            [result.get("url", "") for result in tavily_results if result.get("url")] +
-            [result["url"] for result in exa_results if result["url"]]
-        )
-    }
-    
-    state.external_research = structured
-
-    return {
-        "messages": [
-            f"Analyzed external info with query='{query}'.",
-            f"Found {len(structured['tavily']['results'])} Tavily results and {len(structured['exa']['results'])} Exa results.",
-        ],
-        "external_research": structured,
-        "proceed": True,
+            },
+            "required": ["research_summary", "confidence", "sources"]
+        }
     }
 
-
-###############################################################################
-# 4. Node: Reflect on External Info
-###############################################################################
-async def reflect_on_external_info(state: State) -> Dict[str, Any]:
-    """Decide if the external research is sufficient or needs re-analysis."""
-    if not state.external_research:
-        return {
-            "messages": ["No external research found. Need to gather again."],
-            "proceed": False,
-        }
-    summary = state.external_research.get("summary", "")
-    if not summary:
-        return {
-            "messages": ["External info is incomplete, no summary found."],
-            "proceed": False,
-        }
-    return {"messages": ["External research is sufficient."], "proceed": True}
-
-
-###############################################################################
-# 5. Node: Decide Trade using LLM
-###############################################################################
-async def decide_trade(state: State) -> Dict[str, Any]:
-    """Use the LLM to reason about the market data and external info and produce a trade decision."""
-    state.loop_step += 1
-    market_data_str = str(state.market_data)
-    external_info_str = str(state.external_research)
-
-    messages = [
-        SystemMessage(
-            content="You are a Polymarket trading AI. You have market data and external research."
-        ),
-        HumanMessage(
-            content=(
-                f"Market data: {market_data_str}\n\n"
-                f"External research: {external_info_str}\n\n"
-                "Decide whether to BUY, SELL, or HOLD. "
-                "Write your decision in plain text, e.g. 'BUY YES' or 'SELL' or 'HOLD'."
-            )
-        ),
-    ]
-    response = await llm.achat(messages)
-    decision_text = response.content.strip().upper()
-
-    if "BUY" in decision_text:
-        state.trade_decision = "BUY YES"
-    elif "SELL" in decision_text:
-        state.trade_decision = "SELL"
-    else:
-        state.trade_decision = "HOLD"
-
-    return {
-        "messages": [f"LLM suggests decision: {state.trade_decision}"],
-        "trade_decision": state.trade_decision,
-        "proceed": True,
-    }
-
-
-###############################################################################
-# 5B. Node: Assess Confidence
-###############################################################################
-async def assess_confidence(state: State) -> Dict[str, Any]:
-    """
-    Use the LLM to produce a confidence score for the trade decision.
-    We'll parse out a floating-point number in [0, 1].
-    """
-    # Provide market data, external research, and the proposed decision
-    # Prompt the LLM to return a numeric confidence rating (0.0 to 1.0)
-    prompt = [
-        SystemMessage(
-            content="You are a confidence estimator for a Polymarket agent. Return a single float in [0.0, 1.0]."
-        ),
-        HumanMessage(
-            content=(
-                f"Market data: {state.market_data}\n\n"
-                f"External research: {state.external_research}\n\n"
-                f"Trade decision: {state.trade_decision}\n\n"
-                "Based on your knowledge and the provided information, how confident are you "
-                "in this trade decision (0.0 to 1.0)? Return numeric value only."
-            )
-        ),
-    ]
-    try:
-        response = await llm.apredict(prompt)
-        confidence_val = float(response.strip())
-    except Exception:
-        # If parse fails or LLM returns something unexpected, set a default
-        confidence_val = 0.5
-
-    state.confidence = confidence_val
-    return {
-        "messages": [f"Assessed confidence: {confidence_val:.2f}"],
-        "proceed": True,
-    }
-
-
-###############################################################################
-# 6. Node: Reflect on the Decision (and possibly place an order)
-###############################################################################
-async def reflect_on_decision(state: State) -> Dict[str, Any]:
-    """Reflect on the final decision. If it's BUY or SELL, place an actual order on Polymarket."""
-    decision = state.trade_decision
-    if not decision or decision == "HOLD":
-        return {
-            "messages": ["Decision is HOLD or not set. Not placing any trades."],
-            "proceed": False,
-        }
-
-    if not state.market_data or not state.market_data.get("clobTokenIds"):
-        return {
-            "messages": [
-                "No market_data.clobTokenIds found, cannot place trade. Holding."
-            ],
-            "proceed": False,
-        }
-
-    clob_token_ids = state.market_data["clobTokenIds"]
-    if isinstance(clob_token_ids, str):
-        clob_token_ids = ast.literal_eval(clob_token_ids)
-    if not clob_token_ids:
-        return {
-            "messages": ["No token IDs in market data. Skipping trade."],
-            "proceed": False,
-        }
-
-    yes_token_id = clob_token_ids[0]
-    side = "BUY" if decision.startswith("BUY") else "SELL"
-    size = 10
-    poly_client.execute_order(
-        price=0.5, size=size, side=side, token_id=yes_token_id
+    # Format the prompt
+    p = configuration.research_agent_prompt.format(
+        info=json.dumps(state.extraction_schema, indent=2), 
+        market_data=json.dumps(state.market_data or {}, indent=2), 
+        question=state.market_data["question"], 
+        description=state.market_data["description"], 
+        outcomes=state.market_data["outcomes"]
     )
 
+    # Combine with conversation so far
+    messages = [HumanMessage(content=p)] + state.messages
+
+    # Create the model and bind tools
+    raw_model = init_model(config)
+    model = raw_model.bind_tools([
+        search_exa,
+        search_tavily,
+        external_research_info_tool
+    ], tool_choice="any")
+
+    # Call the model
+    response = cast(AIMessage, await model.ainvoke(messages))
+
+    # Initialize info to None
+    info = None
+
+    print("RESPONSE:")
+    print(response)
+
+    # Check if the response has tool calls
+    if response.tool_calls:
+        for tool_call in response.tool_calls:
+            if tool_call["name"] == "ExternalResearchInfo":
+                info = tool_call["args"]
+                break
+    if info is not None:
+        response.tool_calls = [
+            tc for tc in response.tool_calls if tc["name"] == "ExternalResearchInfo"
+        ]
+    response_messages: List[BaseMessage] = [response]
+    if not response.tool_calls:  # If LLM didn't call any tool
+        response_messages.append(
+            HumanMessage(content="Please respond by calling one of the provided tools.")
+        )
+
     return {
-        "messages": [
-            f"Placed a {decision} order on token_id={yes_token_id} for size={size}."
-        ],
-        "proceed": True,
+        "messages": response_messages,
+        "external_research_info": info,
+        "loop_step": state.loop_step + 1,
     }
 
+class InfoIsSatisfactory(BaseModel):
+    """Validate whether the current extracted info is satisfactory and complete."""
+
+    reason: List[str] = Field(
+        description="First, provide reasoning for why this is either good or bad as a final result. Must include at least 3 reasons."
+    )
+    is_satisfactory: bool = Field(
+        description="After providing your reasoning, provide a value indicating whether the result is satisfactory. If not, you will continue researching."
+    )
+    improvement_instructions: Optional[str] = Field(
+        description="If the result is not satisfactory, provide clear and specific instructions on what needs to be improved or added to make the information satisfactory."
+        " This should include details on missing information, areas that need more depth, or specific aspects to focus on in further research.",
+        default=None,
+    )
 
 ###############################################################################
-# 7. Routing Logic
+# Node: Reflect on Research
 ###############################################################################
-def route_after_market_data(state: State) -> Literal["reflect_on_market_data"]:
-    """Route after market data."""
-    return "reflect_on_market_data"
-
-
-def route_after_market_reflection(
-    state: State,
-) -> Literal["analyze_external_info", "fetch_market_data", "__end__"]:
-    """Route after reflecting on market data."""
-    proceed = False
-    if state.market_data and "question" in state.market_data:
-        proceed = True
-
-    if not proceed and state.loop_step < config.max_loops:
-        return "fetch_market_data"
-    elif not proceed:
-        return "__end__"
-    else:
-        return "analyze_external_info"
-
-
-def route_after_external_info(state: State) -> Literal["reflect_on_external_info"]:
-    """Route after external info is analyzed."""
-    return "reflect_on_external_info"
-
-
-def route_after_external_reflection(
-    state: State,
-) -> Literal["decide_trade", "analyze_external_info", "__end__"]:
-    """Route after reflecting on external info."""
-    proceed = False
-    if state.external_research and state.external_research.get("summary"):
-        proceed = True
-
-    if not proceed and state.loop_step < config.max_loops:
-        return "analyze_external_info"
-    elif not proceed:
-        return "__end__"
-    else:
-        return "decide_trade"
-
-
-def route_after_decision(state: State) -> Literal["assess_confidence"]:
-    """Route after deciding a trade action."""
-    return "assess_confidence"
-
-
-def route_after_confidence(state: State) -> Literal["reflect_on_decision", "fetch_market_data"]:
+async def reflect_on_research_node(
+    state: State, *, config: Optional[RunnableConfig] = None
+) -> Dict[str, Any]:
     """
-    If confidence >= 0.6, proceed with reflection and potential trade.
-    Otherwise, loop back to fetch_market_data (or end).
+    This node checks if the research information gathered is satisfactory.
+    It uses a structured output model to evaluate the quality of research.
     """
-    if state.confidence is None or state.confidence < 0.6:
-        # We can skip or re-fetch. We'll refetch in this example.
-        return "fetch_market_data"
-    return "reflect_on_decision"
+    last_message = state.messages[-1]
+    if not isinstance(last_message, AIMessage):
+        raise ValueError(
+            f"{reflect_on_research_node.__name__} expects the last message in the state to be an AI message with tool calls."
+            f" Got: {type(last_message)}"
+        )
 
+    # Build the system message
+    market_data_str = json.dumps(state.market_data or {}, indent=2)
+    system_text = """You are evaluating the quality of research gathered about a market.
+Your role is to determine if the research is sufficient to proceed with market analysis.
+"""
+    system_msg = SystemMessage(content=f"{system_text}\n\nMarket data:\n{market_data_str}")
 
-def route_after_decision_reflection(
-    state: State,
-) -> Literal["__end__", "fetch_market_data"]:
-    """Route after reflecting on the trade decision."""
-    if (
-        state.trade_decision == "HOLD" or not state.trade_decision
-    ) and state.loop_step < config.max_loops:
-        return "fetch_market_data"
-    return "__end__"
+    # Create messages list
+    messages = [system_msg] + state.messages[:-1]
+    
+    # Get the presumed info
+    presumed_info = state.external_research_info
+    checker_prompt = """I am evaluating the research information below. 
+Is this sufficient to proceed with market analysis? Give your reasoning.
+Consider factors like comprehensiveness, relevance, and reliability of sources.
+If you don't think it's sufficient, be specific about what needs to be improved.
 
+Research Information:
+{presumed_info}"""
+    
+    p1 = checker_prompt.format(presumed_info=json.dumps(presumed_info or {}, indent=2))
+    messages.append(HumanMessage(content=p1))
+
+    # Initialize and configure the model
+    raw_model = init_model(config)
+    bound_model = raw_model.with_structured_output(InfoIsSatisfactory)
+    response = cast(InfoIsSatisfactory, await bound_model.ainvoke(messages))
+
+    if response.is_satisfactory and presumed_info:
+        return {
+            "external_research_info": presumed_info,
+            "messages": [
+                ToolMessage(
+                    tool_call_id=last_message.tool_calls[0]["id"],
+                    content="\n".join(response.reason),
+                    name="ExternalResearchInfo",
+                    additional_kwargs={"artifact": response.model_dump()},
+                    status="success",
+                )
+            ],
+            "decision": "proceed_to_analysis"
+        }
+    else:
+        return {
+            "messages": [
+                ToolMessage(
+                    tool_call_id=last_message.tool_calls[0]["id"],
+                    content=f"Research needs improvement:\n{response.improvement_instructions}",
+                    name="ExternalResearchInfo",
+                    additional_kwargs={"artifact": response.model_dump()},
+                    status="error",
+                )
+            ],
+            "decision": "research_more"
+        }
+
+###### ANALYSIS #######
+
+###############################################################################
+# Node: Analysis Agent
+###############################################################################
+async def analysis_agent_node(
+    state: State, *, config: Optional[RunnableConfig] = None
+) -> Dict[str, Any]:
+    """
+    Sub-agent that focuses on numeric Polymarket analysis.
+    This node interprets numeric data, orderbook, and trends from Polymarket.
+    """
+    configuration = Configuration.from_runnable_config(config)
+
+    # Define the 'AnalysisInfo' tool with enhanced schema
+    analysis_info_tool = {
+        "name": "AnalysisInfo",
+        "description": "Call this when you have completed your analysis. Provide a comprehensive analysis of all market data gathered from the tools.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "analysis_summary": {
+                    "type": "string",
+                    "description": "A comprehensive summary of all market analysis findings"
+                },
+                "confidence": {
+                    "type": "number",
+                    "description": "Confidence level in the analysis (0-1)"
+                },
+                "market_metrics": {
+                    "type": "object",
+                    "description": "Analysis of key market metrics",
+                    "properties": {
+                        "price_analysis": {
+                            "type": "string",
+                            "description": "Analysis of current prices, spreads, and price movements"
+                        },
+                        "volume_analysis": {
+                            "type": "string",
+                            "description": "Analysis of trading volumes and activity"
+                        },
+                        "liquidity_analysis": {
+                            "type": "string",
+                            "description": "Analysis of market liquidity and depth"
+                        }
+                    }
+                },
+                "orderbook_analysis": {
+                    "type": "object",
+                    "description": "Analysis of order book data",
+                    "properties": {
+                        "market_depth": {
+                            "type": "string",
+                            "description": "Analysis of bid/ask depth and imbalances"
+                        },
+                        "execution_analysis": {
+                            "type": "string",
+                            "description": "Analysis of potential execution prices and slippage"
+                        },
+                        "liquidity_distribution": {
+                            "type": "string",
+                            "description": "Analysis of how liquidity is distributed in the book"
+                        }
+                    }
+                },
+                "trading_signals": {
+                    "type": "object",
+                    "description": "Key trading signals and indicators",
+                    "properties": {
+                        "price_momentum": {
+                            "type": "string",
+                            "description": "Analysis of price momentum and trends"
+                        },
+                        "market_efficiency": {
+                            "type": "string",
+                            "description": "Analysis of market efficiency and potential opportunities"
+                        },
+                        "risk_factors": {
+                            "type": "string",
+                            "description": "Identified risk factors and concerns"
+                        }
+                    }
+                },
+                "execution_recommendation": {
+                    "type": "object",
+                    "description": "Recommendations for trade execution",
+                    "properties": {
+                        "optimal_size": {
+                            "type": "string",
+                            "description": "Recommended trade size based on market depth"
+                        },
+                        "entry_strategy": {
+                            "type": "string",
+                            "description": "Recommended approach for trade entry"
+                        },
+                        "key_levels": {
+                            "type": "string",
+                            "description": "Important price levels to watch"
+                        }
+                    }
+                }
+            },
+            "required": [
+                "analysis_summary",
+                "confidence",
+                "market_metrics",
+                "orderbook_analysis",
+                "trading_signals",
+                "execution_recommendation"
+            ]
+        }
+    }
+
+    # Format the prompt with required data checks
+    required_data_checks = {
+        "market_details": state.market_details is not None,
+        "orderbook_data": state.orderbook_data is not None,
+        "historical_trends": state.historical_trends is not None
+    }
+
+    # Build the prompt with data availability info
+    p = configuration.analysis_agent_prompt.format(
+        info=json.dumps(analysis_info_tool["parameters"], indent=2),
+        market_data=json.dumps(state.market_data or {}, indent=2),
+        question=state.market_data["question"] if state.market_data else "",
+        description=state.market_data["description"] if state.market_data else "",
+        outcomes=state.market_data["outcomes"] if state.market_data else ""
+    )
+
+    # Add data availability check to prompt
+    data_check_prompt = "\nData Availability Status:\n"
+    for data_type, is_available in required_data_checks.items():
+        if not is_available:
+            data_check_prompt += f"- {data_type}: NOT AVAILABLE - Please use appropriate tool to fetch this data\n"
+        else:
+            data_check_prompt += f"- {data_type}: Available\n"
+    
+    p += data_check_prompt
+
+    # Combine with conversation so far
+    messages = [HumanMessage(content=p)] + state.messages
+
+    # Create the model and bind tools
+    raw_model = init_model(config)
+    model = raw_model.bind_tools([
+        analysis_get_market_details,
+        analysis_get_multi_level_orderbook,
+        analysis_get_historical_trends,
+        analysis_get_external_news,
+        analysis_get_market_trades,
+        analysis_info_tool
+    ], tool_choice="any")
+
+    # Call the model
+    response = cast(AIMessage, await model.ainvoke(messages))
+    info = None
+
+    if response.tool_calls:
+        for tool_call in response.tool_calls:
+            if tool_call["name"] == "AnalysisInfo":
+                info = tool_call["args"]
+                break
+        if info is not None:
+            # Keep only the AnalysisInfo tool call in the final response
+            response.tool_calls = [
+                tc for tc in response.tool_calls if tc["name"] == "AnalysisInfo"
+            ]
+            # Store the complete analysis info in state
+            state.analysis_info = info
+
+    response_messages: List[BaseMessage] = [response]
+    if not response.tool_calls:  # If LLM didn't call any tool
+        response_messages.append(
+            HumanMessage(content="Please respond by calling one of the provided tools to gather data before finalizing your analysis.")
+        )
+
+    return {
+        "messages": response_messages,
+        "analysis_info": info,
+        "proceed": True,
+        "loop_step": state.loop_step + 1,
+    }
+
+class AnalysisIsSatisfactory(BaseModel):
+    """Validate whether the market analysis is satisfactory and complete."""
+
+    reason: List[str] = Field(
+        description="First, provide reasoning for why this analysis is either good or bad as a final result. Must include at least 3 reasons."
+    )
+    is_satisfactory: bool = Field(
+        description="After providing your reasoning, provide a value indicating whether the analysis is satisfactory. If not, you will continue analyzing."
+    )
+    improvement_instructions: Optional[str] = Field(
+        description="If the analysis is not satisfactory, provide clear and specific instructions on what needs to be improved or added to make the analysis satisfactory.",
+        default=None,
+    )
+
+###############################################################################
+# Node: Reflect on Analysis
+###############################################################################
+async def reflect_on_analysis_node(
+    state: State, *, config: Optional[RunnableConfig] = None
+) -> Dict[str, Any]:
+    """
+    This node checks if the market analysis is satisfactory.
+    It uses a structured output model to evaluate the quality of analysis.
+    """
+    last_message = state.messages[-1]
+    if not isinstance(last_message, AIMessage):
+        raise ValueError(
+            f"{reflect_on_analysis_node.__name__} expects the last message in the state to be an AI message."
+            f" Got: {type(last_message)}"
+        )
+
+    market_data_str = json.dumps(state.market_data or {}, indent=2)
+    system_text = """You are evaluating the quality of market analysis based on available Polymarket data.
+Your role is to determine if we have sufficient information to make an informed trading decision.
+
+Available Data Sources:
+1. Market Details: Current prices, volumes, spreads, and basic market metrics
+2. Orderbook Data: Current order book state with bid/ask levels
+3. Market Trades: Recent trade activity and prices
+4. Basic Historical Data: Limited historical price and volume information
+
+Focus on evaluating whether we have:
+1. Clear understanding of current market prices and spreads
+2. Sufficient liquidity assessment for intended trading
+3. Basic market sentiment from recent trading activity
+4. Reasonable risk assessment based on available metrics
+
+Do NOT require:
+- Detailed time-series analysis (not available from API)
+- Historical liquidity profiles (not available)
+- Complex volatility calculations
+- Order flow imbalance analysis
+"""
+    system_msg = SystemMessage(content=f"{system_text}\n\nMarket data:\n{market_data_str}")
+
+    messages = [system_msg] + state.messages[:-1]
+    
+    analysis_info = state.analysis_info
+    checker_prompt = """I am evaluating if we have sufficient market analysis to make a trading decision.
+
+Key Questions:
+1. Do we understand the current market price levels and spreads?
+2. Do we have a clear picture of available liquidity for trading?
+3. Can we assess basic market sentiment from recent activity?
+4. Do we have enough information to identify major trading risks?
+
+Remember: We are limited to current market data and basic historical information from Polymarket's APIs.
+Focus on whether the analysis makes good use of the available data rather than requesting unavailable metrics.
+
+Analysis Information:
+{analysis_info}"""
+    
+    p1 = checker_prompt.format(analysis_info=json.dumps(analysis_info or {}, indent=2))
+    messages.append(HumanMessage(content=p1))
+
+    raw_model = init_model(config)
+    bound_model = raw_model.with_structured_output(AnalysisIsSatisfactory)
+    response = cast(AnalysisIsSatisfactory, await bound_model.ainvoke(messages))
+
+    if response.is_satisfactory and analysis_info:
+        return {
+            "analysis_info": analysis_info,
+            "messages": [
+                ToolMessage(
+                    tool_call_id=last_message.tool_calls[0]["id"] if last_message.tool_calls else "",
+                    content="\n".join(response.reason),
+                    name="Analysis",
+                    additional_kwargs={"artifact": response.model_dump()},
+                    status="success",
+                )            ],
+            "decision": "proceed_to_trade"
+        }
+    else:
+        return {
+            "messages": [
+                ToolMessage(
+                    tool_call_id=last_message.tool_calls[0]["id"] if last_message.tool_calls else "",
+                    content=f"Analysis needs improvement:\n{response.improvement_instructions}",
+                    name="Analysis",
+                    additional_kwargs={"artifact": response.model_dump()},
+                    status="error",
+                )
+            ],
+            "decision": "analysis_more"
+        }
+
+###### TRADE #######
+
+class TradeIsSatisfactory(BaseModel):
+    """Validate whether the trade decision is satisfactory and complete."""
+
+    reason: List[str] = Field(
+        description="First, provide reasoning for why this trade decision is either good or bad as a final result. Must include at least 3 reasons."
+    )
+    is_satisfactory: bool = Field(
+        description="After providing your reasoning, provide a value indicating whether the trade decision is satisfactory. If not, you will continue refining."
+    )
+    improvement_instructions: Optional[str] = Field(
+        description="If the trade decision is not satisfactory, provide clear and specific instructions on what needs to be improved or reconsidered.",
+        default=None,
+    )
+
+###############################################################################
+# Node: Trade Agent
+###############################################################################
+async def trade_agent_node(
+    state: State, *, config: Optional[RunnableConfig] = None
+) -> Dict[str, Any]:
+    """
+    Sub-agent for finalizing trade decisions.
+    This node makes the final trade decision based on research and analysis.
+    """
+    configuration = Configuration.from_runnable_config(config)
+
+    trade_prompt_schema = {
+        "side": "",
+        "reason": "",
+        "confidence": 0.0
+    }
+
+    system_text = configuration.trade_agent_prompt.format(
+        info=json.dumps(trade_prompt_schema, indent=2),
+        market_data=json.dumps(state.market_data or {}, indent=2),
+        question=state.market_data["question"],
+        description=state.market_data["description"],
+        outcomes=state.market_data["outcomes"]
+    )
+
+    messages = [HumanMessage(content=system_text)] + state.messages
+
+    raw_model = init_model(config)
+    # Bind the 'trade' function directly
+    model = raw_model.bind_tools([trade], tool_choice="any")
+
+    response = await model.ainvoke(messages)
+    if not isinstance(response, AIMessage):
+        response = AIMessage(content=str(response))
+
+    trade_info = None
+    if hasattr(response, "tool_calls") and response.tool_calls:
+        for tool_call in response.tool_calls:
+            if tool_call["name"] == "trade":
+                trade_info = tool_call["args"]
+                break
+        if trade_info is not None:
+            response.tool_calls = [
+                tc for tc in response.tool_calls if tc["name"] == "trade"
+            ]
+
+    new_messages: List[BaseMessage] = [response]
+    if not response.tool_calls:
+        new_messages.append(
+            HumanMessage(content="Please respond by calling the 'trade' tool to finalize your decision.")
+        )
+
+    return {
+        "messages": new_messages,
+        "trade_info": trade_info,
+        "proceed": True,
+        "loop_step": state.loop_step + 1,
+    }
+
+###############################################################################
+# Node: Reflect on Trade
+###############################################################################
+async def reflect_on_trade_node(
+    state: State, *, config: Optional[RunnableConfig] = None
+) -> Dict[str, Any]:
+    """
+    This node checks if the trade decision is satisfactory.
+    It uses a structured output model to evaluate the quality of the trade decision.
+    """
+    last_message = state.messages[-1]
+    if not isinstance(last_message, AIMessage):
+        raise ValueError(
+            f"{reflect_on_trade_node.__name__} expects the last message in the state to be an AI message."
+            f" Got: {type(last_message)}"
+        )
+
+    market_data_str = json.dumps(state.market_data or {}, indent=2)
+    system_text = """You are evaluating the quality of a trade decision.
+Your role is to determine if the trade decision is well-reasoned and ready to execute.
+"""
+    system_msg = SystemMessage(content=f"{system_text}\n\nMarket data:\n{market_data_str}")
+
+    messages = [system_msg] + state.messages[:-1]
+    
+    trade_info = state.trade_info
+    checker_prompt = """I am evaluating the trade decision below. 
+Is this a well-reasoned trade decision ready to execute? Give your reasoning.
+Consider factors like risk/reward, position size, and market timing.
+If you don't think it's ready, be specific about what needs to be reconsidered.
+
+Trade Decision:
+{trade_info}"""
+    
+    p1 = checker_prompt.format(trade_info=json.dumps(trade_info or {}, indent=2))
+    messages.append(HumanMessage(content=p1))
+
+    raw_model = init_model(config)
+    bound_model = raw_model.with_structured_output(TradeIsSatisfactory)
+    response = cast(TradeIsSatisfactory, await bound_model.ainvoke(messages))
+
+    if response.is_satisfactory and trade_info:
+        return {
+            "trade_info": trade_info,
+            "messages": [
+                ToolMessage(
+                    tool_call_id=last_message.tool_calls[0]["id"] if last_message.tool_calls else "",
+                    content="\n".join(response.reason),
+                    name="Trade",
+                    additional_kwargs={"artifact": response.model_dump()},
+                    status="success",
+                )
+            ],
+            "decision": "end"
+        }
+    else:
+        return {
+            "messages": [
+                ToolMessage(
+                    tool_call_id=last_message.tool_calls[0]["id"] if last_message.tool_calls else "",
+                    content=f"Trade decision needs improvement:\n{response.improvement_instructions}",
+                    name="Trade",
+                    additional_kwargs={"artifact": response.model_dump()},
+                    status="error",
+                )
+            ],
+            "decision": "trade_more"
+        }
+
+###############################################################################
+# Routing
+###############################################################################
+def route_after_fetch(state: State) -> Literal["research_agent", "__end__"]:
+    """After fetch, we always go to the research_agent (unless there's no data)."""
+    if not state.market_data:
+        return "__end__"
+    # Reset loop step when starting research
+    state.loop_step = 0
+    return "research_agent"
+
+def route_after_research_agent(state: State) -> Literal["research_agent", "research_tools", "reflect_on_research"]:
+    """After research agent, check if we need to execute tools or reflect."""
+    print("INSIDE ROUTE AFTER RESEARCH AGENT")
+    last_msg = state.messages[-1]
+    
+    if not isinstance(last_msg, AIMessage):
+        return "research_agent"
+    
+    if last_msg.tool_calls and last_msg.tool_calls[0]["name"] == "ExternalResearchInfo":
+        return "reflect_on_research"
+    else:
+        return "research_tools"
+
+def route_after_reflect_on_research(state: State, *, config: Optional[RunnableConfig] = None) -> Literal["research_agent", "analysis_agent", "__end__"]:
+    configuration = Configuration.from_runnable_config(config)
+
+    last_msg = state.messages[-1] if state.messages else None
+    if not isinstance(last_msg, ToolMessage):
+        return "research_agent"
+    
+    if last_msg.status == "success":
+        # Reset loop step when moving to analysis agent
+        state.loop_step = 0
+        return "analysis_agent"
+    elif last_msg.status == "error":
+        if state.loop_step >= configuration.max_loops:
+            return "__end__"
+        return "research_agent"
+    
+    return "research_agent"
+
+def route_after_analysis(state: State) -> Literal["analysis_agent", "analysis_tools", "reflect_on_analysis"]:
+    """After analysis agent, check if we need to execute tools or reflect."""
+    last_msg = state.messages[-1] if state.messages else None
+    
+    if not isinstance(last_msg, AIMessage):
+        return "analysis_agent"
+    
+    if last_msg.tool_calls and last_msg.tool_calls[0]["name"] == "AnalysisInfo":
+        return "reflect_on_analysis"
+    else: 
+        return "analysis_tools"
+
+def route_after_reflect_on_analysis(state: State, *, config: Optional[RunnableConfig] = None) -> Literal["analysis_agent", "trade_agent", "__end__"]:
+    configuration = Configuration.from_runnable_config(config)
+
+    last_msg = state.messages[-1] if state.messages else None
+    if not isinstance(last_msg, ToolMessage):
+        return "analysis_agent"
+    
+    if last_msg.status == "success":
+        # Reset loop step when moving to trade agent
+        state.loop_step = 0
+        return "trade_agent"
+    elif last_msg.status == "error":
+        if state.loop_step >= configuration.max_loops:
+            return "__end__"
+        return "analysis_agent"
+    
+    return "analysis_agent"
+
+def route_after_trade(state: State) -> Literal["trade_agent", "trade_tools", "reflect_on_trade"]:
+    """After trade agent, check if we need to execute tools or reflect."""
+    last_msg = state.messages[-1] if state.messages else None
+    
+    if not isinstance(last_msg, AIMessage):
+        return "trade_agent"
+    
+    if last_msg.tool_calls and last_msg.tool_calls[0]["name"] == "Trade":
+        return "reflect_on_trade"
+    else:
+        return "trade_tools"
+
+def route_after_reflect_on_trade(state: State, *, config: Optional[RunnableConfig] = None) -> Literal["trade_agent", "__end__"]:
+    configuration = Configuration.from_runnable_config(config)
+
+    last_msg = state.messages[-1] if state.messages else None
+    if not isinstance(last_msg, ToolMessage):
+        return "trade_agent"
+    
+    if last_msg.status == "success":
+        return "__end__"
+    elif last_msg.status == "error":
+        if state.loop_step >= configuration.max_loops:
+            return "__end__"
+        return "trade_agent"
+    
+    return "trade_agent"
 
 ###############################################################################
 # Construct the Graph
 ###############################################################################
-workflow = StateGraph(
-    State,
-    input=InputState,
-    output=OutputState,
-)
+workflow = StateGraph(State, input=InputState, output=OutputState, config_schema=Configuration)
 
-# Add nodes
-workflow.add_node(fetch_market_data)
-workflow.add_node(reflect_on_market_data)
-workflow.add_node(analyze_external_info)
-workflow.add_node(reflect_on_external_info)
-workflow.add_node(decide_trade)
-workflow.add_node(assess_confidence)  # new node
-workflow.add_node(reflect_on_decision)
 
-# Edges
 workflow.add_edge("__start__", "fetch_market_data")
-workflow.add_conditional_edges("fetch_market_data", route_after_market_data)
-workflow.add_conditional_edges("reflect_on_market_data", route_after_market_reflection)
-workflow.add_conditional_edges("analyze_external_info", route_after_external_info)
-workflow.add_conditional_edges(
-    "reflect_on_external_info", route_after_external_reflection
-)
-workflow.add_conditional_edges("decide_trade", route_after_decision)
-workflow.add_conditional_edges("assess_confidence", route_after_confidence)
-workflow.add_conditional_edges("reflect_on_decision", route_after_decision_reflection)
+workflow.add_node("fetch_market_data", fetch_market_data)
+workflow.add_conditional_edges("fetch_market_data", route_after_fetch)
+
+# Research 
+workflow.add_node("research_tools", ToolNode([
+    search_exa,
+    search_tavily
+]))
+workflow.add_node("research_agent", research_agent_node)
+workflow.add_node("reflect_on_research", reflect_on_research_node)
+workflow.add_conditional_edges("research_agent", route_after_research_agent)
+workflow.add_edge("research_tools", "research_agent")
+workflow.add_conditional_edges("reflect_on_research", route_after_reflect_on_research)
+
+# Analysis
+workflow.add_node("analysis_tools", ToolNode([
+    analysis_get_market_details,
+    analysis_get_multi_level_orderbook,
+    analysis_get_historical_trends,
+    analysis_get_external_news,
+    analysis_get_market_trades
+]))
+workflow.add_node("analysis_agent", analysis_agent_node)
+workflow.add_node("reflect_on_analysis", reflect_on_analysis_node)
+workflow.add_conditional_edges("analysis_agent", route_after_analysis)
+workflow.add_edge("analysis_tools", "analysis_agent")
+workflow.add_conditional_edges("reflect_on_analysis", route_after_reflect_on_analysis)
+
+# Trade
+workflow.add_node("trade_tools", ToolNode([
+    trade
+]))
+workflow.add_node("trade_agent", trade_agent_node)
+workflow.add_node("reflect_on_trade", reflect_on_trade_node)
+workflow.add_edge("trade_tools", "trade_agent")
+workflow.add_conditional_edges("trade_agent", route_after_trade)
+workflow.add_conditional_edges("reflect_on_trade", route_after_reflect_on_trade)
 
 # Compile
 graph = workflow.compile()
