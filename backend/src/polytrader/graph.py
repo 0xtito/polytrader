@@ -26,14 +26,15 @@ from polytrader.gamma import GammaMarketClient
 from polytrader.polymarket import Polymarket
 from polytrader.state import InputState, OutputState, State
 from polytrader.tools import (
-    get_market_details,
-    get_orderbook_analysis,
+    analysis_get_external_news,
+    analysis_get_market_trades,
     search_exa,
     search_tavily,
-    market_details_tool,
-    orderbook_analysis_tool,
     trade,
-    trade_tool,
+    analysis_get_market_details,
+    analysis_get_multi_level_orderbook,
+    analysis_get_historical_trends,
+    # analysis_get_external_news,  # REMOVED from analysis agent
 )
 from polytrader.utils import init_model
 
@@ -258,44 +259,135 @@ async def analysis_agent_node(
     state: State, *, config: Optional[RunnableConfig] = None
 ) -> Dict[str, Any]:
     """
-    Sub-agent that focuses on Polymarket analysis.
-    This node interprets market data and orderbook information.
+    Sub-agent that focuses on numeric Polymarket analysis.
+    This node interprets numeric data, orderbook, and trends from Polymarket.
     """
     configuration = Configuration.from_runnable_config(config)
 
-    # Define the 'AnalysisInfo' tool for finalizing analysis
+    # Define the 'AnalysisInfo' tool with enhanced schema
     analysis_info_tool = {
         "name": "AnalysisInfo",
-        "description": "Call this when you have completed your analysis. Provide a summary, confidence (0-1), and all information you gathered from polymarket.",
+        "description": "Call this when you have completed your analysis. Provide a comprehensive analysis of all market data gathered from the tools.",
         "parameters": {
             "type": "object",
             "properties": {
                 "analysis_summary": {
                     "type": "string",
-                    "description": "A comprehensive summary of the market analysis findings"
+                    "description": "A comprehensive summary of all market analysis findings"
                 },
                 "confidence": {
                     "type": "number",
                     "description": "Confidence level in the analysis (0-1)"
                 },
-                "sources": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "List of sources or data references used in analysis"
+                "market_metrics": {
+                    "type": "object",
+                    "description": "Analysis of key market metrics",
+                    "properties": {
+                        "price_analysis": {
+                            "type": "string",
+                            "description": "Analysis of current prices, spreads, and price movements"
+                        },
+                        "volume_analysis": {
+                            "type": "string",
+                            "description": "Analysis of trading volumes and activity"
+                        },
+                        "liquidity_analysis": {
+                            "type": "string",
+                            "description": "Analysis of market liquidity and depth"
+                        }
+                    }
+                },
+                "orderbook_analysis": {
+                    "type": "object",
+                    "description": "Analysis of order book data",
+                    "properties": {
+                        "market_depth": {
+                            "type": "string",
+                            "description": "Analysis of bid/ask depth and imbalances"
+                        },
+                        "execution_analysis": {
+                            "type": "string",
+                            "description": "Analysis of potential execution prices and slippage"
+                        },
+                        "liquidity_distribution": {
+                            "type": "string",
+                            "description": "Analysis of how liquidity is distributed in the book"
+                        }
+                    }
+                },
+                "trading_signals": {
+                    "type": "object",
+                    "description": "Key trading signals and indicators",
+                    "properties": {
+                        "price_momentum": {
+                            "type": "string",
+                            "description": "Analysis of price momentum and trends"
+                        },
+                        "market_efficiency": {
+                            "type": "string",
+                            "description": "Analysis of market efficiency and potential opportunities"
+                        },
+                        "risk_factors": {
+                            "type": "string",
+                            "description": "Identified risk factors and concerns"
+                        }
+                    }
+                },
+                "execution_recommendation": {
+                    "type": "object",
+                    "description": "Recommendations for trade execution",
+                    "properties": {
+                        "optimal_size": {
+                            "type": "string",
+                            "description": "Recommended trade size based on market depth"
+                        },
+                        "entry_strategy": {
+                            "type": "string",
+                            "description": "Recommended approach for trade entry"
+                        },
+                        "key_levels": {
+                            "type": "string",
+                            "description": "Important price levels to watch"
+                        }
+                    }
                 }
             },
-            "required": ["analysis_summary", "confidence", "sources"]
+            "required": [
+                "analysis_summary",
+                "confidence",
+                "market_metrics",
+                "orderbook_analysis",
+                "trading_signals",
+                "execution_recommendation"
+            ]
         }
     }
 
-    # Build the prompt
+    # Format the prompt with required data checks
+    required_data_checks = {
+        "market_details": state.market_details is not None,
+        "orderbook_data": state.orderbook_data is not None,
+        "historical_trends": state.historical_trends is not None
+    }
+
+    # Build the prompt with data availability info
     p = configuration.analysis_agent_prompt.format(
-        info=json.dumps({"analysis_summary": "", "confidence": 0.0, "sources": []}, indent=2),
+        info=json.dumps(analysis_info_tool["parameters"], indent=2),
         market_data=json.dumps(state.market_data or {}, indent=2),
-        question=state.market_data["question"],
-        description=state.market_data["description"],
-        outcomes=state.market_data["outcomes"]
+        question=state.market_data["question"] if state.market_data else "",
+        description=state.market_data["description"] if state.market_data else "",
+        outcomes=state.market_data["outcomes"] if state.market_data else ""
     )
+
+    # Add data availability check to prompt
+    data_check_prompt = "\nData Availability Status:\n"
+    for data_type, is_available in required_data_checks.items():
+        if not is_available:
+            data_check_prompt += f"- {data_type}: NOT AVAILABLE - Please use appropriate tool to fetch this data\n"
+        else:
+            data_check_prompt += f"- {data_type}: Available\n"
+    
+    p += data_check_prompt
 
     # Combine with conversation so far
     messages = [HumanMessage(content=p)] + state.messages
@@ -303,8 +395,11 @@ async def analysis_agent_node(
     # Create the model and bind tools
     raw_model = init_model(config)
     model = raw_model.bind_tools([
-        market_details_tool["func"],
-        orderbook_analysis_tool["func"],
+        analysis_get_market_details,
+        analysis_get_multi_level_orderbook,
+        analysis_get_historical_trends,
+        analysis_get_external_news,
+        analysis_get_market_trades,
         analysis_info_tool
     ], tool_choice="any")
 
@@ -322,11 +417,13 @@ async def analysis_agent_node(
             response.tool_calls = [
                 tc for tc in response.tool_calls if tc["name"] == "AnalysisInfo"
             ]
+            # Store the complete analysis info in state
+            state.analysis_info = info
 
     response_messages: List[BaseMessage] = [response]
     if not response.tool_calls:  # If LLM didn't call any tool
         response_messages.append(
-            HumanMessage(content="Please respond by calling one of the provided tools.")
+            HumanMessage(content="Please respond by calling one of the provided tools to gather data before finalizing your analysis.")
         )
 
     return {
@@ -368,18 +465,42 @@ async def reflect_on_analysis_node(
         )
 
     market_data_str = json.dumps(state.market_data or {}, indent=2)
-    system_text = """You are evaluating the quality of market analysis.
-Your role is to determine if the analysis is sufficient to proceed with trading decisions.
+    system_text = """You are evaluating the quality of market analysis based on available Polymarket data.
+Your role is to determine if we have sufficient information to make an informed trading decision.
+
+Available Data Sources:
+1. Market Details: Current prices, volumes, spreads, and basic market metrics
+2. Orderbook Data: Current order book state with bid/ask levels
+3. Market Trades: Recent trade activity and prices
+4. Basic Historical Data: Limited historical price and volume information
+
+Focus on evaluating whether we have:
+1. Clear understanding of current market prices and spreads
+2. Sufficient liquidity assessment for intended trading
+3. Basic market sentiment from recent trading activity
+4. Reasonable risk assessment based on available metrics
+
+Do NOT require:
+- Detailed time-series analysis (not available from API)
+- Historical liquidity profiles (not available)
+- Complex volatility calculations
+- Order flow imbalance analysis
 """
     system_msg = SystemMessage(content=f"{system_text}\n\nMarket data:\n{market_data_str}")
 
     messages = [system_msg] + state.messages[:-1]
     
     analysis_info = state.analysis_info
-    checker_prompt = """I am evaluating the market analysis information below. 
-Is this sufficient to proceed with trading decisions? Give your reasoning.
-Consider factors like market depth, liquidity analysis, and price trends.
-If you don't think it's sufficient, be specific about what needs to be improved.
+    checker_prompt = """I am evaluating if we have sufficient market analysis to make a trading decision.
+
+Key Questions:
+1. Do we understand the current market price levels and spreads?
+2. Do we have a clear picture of available liquidity for trading?
+3. Can we assess basic market sentiment from recent activity?
+4. Do we have enough information to identify major trading risks?
+
+Remember: We are limited to current market data and basic historical information from Polymarket's APIs.
+Focus on whether the analysis makes good use of the available data rather than requesting unavailable metrics.
 
 Analysis Information:
 {analysis_info}"""
@@ -401,8 +522,7 @@ Analysis Information:
                     name="Analysis",
                     additional_kwargs={"artifact": response.model_dump()},
                     status="success",
-                )
-            ],
+                )            ],
             "decision": "proceed_to_trade"
         }
     else:
@@ -464,15 +584,15 @@ async def trade_agent_node(
     messages = [HumanMessage(content=system_text)] + state.messages
 
     raw_model = init_model(config)
-    # We'll reuse the existing trade_tool
-    model = raw_model.bind_tools([trade_tool["func"]], tool_choice="any")
+    # Bind the 'trade' function directly
+    model = raw_model.bind_tools([trade], tool_choice="any")
 
     response = await model.ainvoke(messages)
     if not isinstance(response, AIMessage):
         response = AIMessage(content=str(response))
 
     trade_info = None
-    if response.tool_calls:
+    if hasattr(response, "tool_calls") and response.tool_calls:
         for tool_call in response.tool_calls:
             if tool_call["name"] == "trade":
                 trade_info = tool_call["args"]
@@ -571,13 +691,14 @@ def route_after_fetch(state: State) -> Literal["research_agent", "__end__"]:
     """After fetch, we always go to the research_agent (unless there's no data)."""
     if not state.market_data:
         return "__end__"
+    # Reset loop step when starting research
+    state.loop_step = 0
     return "research_agent"
 
 def route_after_research_agent(state: State) -> Literal["research_agent", "research_tools", "reflect_on_research"]:
     """After research agent, check if we need to execute tools or reflect."""
     print("INSIDE ROUTE AFTER RESEARCH AGENT")
     last_msg = state.messages[-1]
-    print(last_msg)
     
     if not isinstance(last_msg, AIMessage):
         return "research_agent"
@@ -595,6 +716,8 @@ def route_after_reflect_on_research(state: State, *, config: Optional[RunnableCo
         return "research_agent"
     
     if last_msg.status == "success":
+        # Reset loop step when moving to analysis agent
+        state.loop_step = 0
         return "analysis_agent"
     elif last_msg.status == "error":
         if state.loop_step >= configuration.max_loops:
@@ -623,6 +746,8 @@ def route_after_reflect_on_analysis(state: State, *, config: Optional[RunnableCo
         return "analysis_agent"
     
     if last_msg.status == "success":
+        # Reset loop step when moving to trade agent
+        state.loop_step = 0
         return "trade_agent"
     elif last_msg.status == "error":
         if state.loop_step >= configuration.max_loops:
@@ -682,8 +807,11 @@ workflow.add_conditional_edges("reflect_on_research", route_after_reflect_on_res
 
 # Analysis
 workflow.add_node("analysis_tools", ToolNode([
-    get_market_details,
-    get_orderbook_analysis
+    analysis_get_market_details,
+    analysis_get_multi_level_orderbook,
+    analysis_get_historical_trends,
+    analysis_get_external_news,
+    analysis_get_market_trades
 ]))
 workflow.add_node("analysis_agent", analysis_agent_node)
 workflow.add_node("reflect_on_analysis", reflect_on_analysis_node)

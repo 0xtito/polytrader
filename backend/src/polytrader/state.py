@@ -38,8 +38,13 @@ class State(InputState):
     # Additional fields for storing agent outputs
     analysis_info: Optional[dict[str, Any]] = None
     trade_info: Optional[dict[str, Any]] = None
-
     confidence: Optional[float] = None
+
+    # Fields for storing analysis tool data
+    market_details: Optional[dict[str, Any]] = None
+    orderbook_data: Optional[dict[str, Any]] = None
+    market_trades: Optional[dict[str, Any]] = None
+    historical_trends: Optional[dict[str, Any]] = None
 
 
 @dataclass(kw_only=True)
@@ -47,3 +52,6 @@ class OutputState:
     """This is the final output after the graph completes."""
 
     external_research_info: dict[str, Any]
+    analysis_info: dict[str, Any]
+    trade_info: dict[str, Any]
+    confidence: float

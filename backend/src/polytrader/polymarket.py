@@ -3,9 +3,11 @@
 
 """Polymarket API integration and client utilities."""
 import ast
+from dataclasses import dataclass
 import os
 import pdb
 import time
+from typing import Any
 
 import httpx
 from dotenv import load_dotenv
@@ -301,14 +303,31 @@ class Polymarket:
             market = self.get_market(token_one_id)
             markets.append(market)
         return markets
+    
+    @dataclass
+    class BookParams:
+        token_id: str
+        side: str = ""
 
     def get_orderbook(self, token_id: str) -> OrderBookSummary:
         """Fetch the orderbook for a specified token_id."""
         return self.client.get_order_book(token_id)
+    
+    def get_orderbooks(self, params: list[BookParams]) -> list[OrderBookSummary]:
+        """Fetch the orderbooks for a list of specified token_ids."""
+        return self.client.get_order_books(params)
 
-    def get_orderbook_price(self, token_id: str) -> float:
+    def get_orderbook_price(self, token_id: str, side: str = "BUY") -> float:
         """Fetch the best price for a specified token_id from the orderbook."""
-        return float(self.client.get_price(token_id))
+        return float(self.client.get_price(token_id, side))
+    
+    def get_last_trade_price(self, token_id: str) -> dict[str, Any]:
+        """Fetch the last trade price for a specified token_id."""
+        return self.client.get_last_trade_price(token_id)
+
+    def get_last_trades_prices(self, params: list[BookParams]) -> list[dict[str, Any]]:
+        """Fetch the last trade prices for a list of specified token_ids."""
+        return self.client.get_last_trades_prices(params)
 
     def get_address_for_private_key(self):
         """Return the public address derived from the private key."""
