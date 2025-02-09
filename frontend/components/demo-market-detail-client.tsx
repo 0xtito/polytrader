@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import { format } from "date-fns";
 import {
   ArrowUpIcon,
@@ -14,62 +14,45 @@ import AgentConsole from "@/components/agent-console";
 import { PolymarketData, ParsedMarketData } from "@/types/market-types";
 import { cn } from "@/lib/utils";
 
-interface MarketDetailClientProps {
-  marketId: string;
-  initialMarketData: PolymarketData;
-}
+// Demo market data
+const demoMarket: PolymarketData = {
+  id: "demo",
+  question: "Will the Eagles win Super Bowl 2025?",
+  description:
+    'This market will resolve to "Yes" if the Philadelphia Eagles win Super Bowl LIX. Otherwise, this market will resolve to "No".\n\nIf at any point it becomes impossible for this team to win the Super Bowl based on the rules of the NFL (e.g. they are eliminated in the playoff bracket), this market will resolve immediately to "No".',
+  volume: "10079404.377335",
+  volumeNum: 10079404.377335,
+  volume24hr: 246630.568942,
+  liquidity: "1642645.04094",
+  liquidityNum: 1642645.04094,
+  outcomes: '["Yes", "No"]',
+  outcomePrices: "[0.478, 0.522]",
+  endDate: "2025-02-09T12:00:00Z",
+  startDate: "2024-07-09T15:37:44.526Z",
+  image:
+    "https://polymarket-upload.s3.us-east-2.amazonaws.com/will-the-eagles-win-super-bowl-2025-WT_Uuw9p6PPL.png",
+  lastTradePrice: 0.479,
+  bestBid: 0.477,
+  bestAsk: 0.479,
+  spread: 0.002,
+  oneDayPriceChange: 0.005,
+} as PolymarketData;
 
-export default function MarketDetailClient({
-  marketId,
-  initialMarketData,
-}: MarketDetailClientProps) {
-  const [market, setMarket] = useState<ParsedMarketData | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
+const parsedDemoMarket: ParsedMarketData = {
+  ...demoMarket,
+  parsedOutcomes: JSON.parse(demoMarket.outcomes),
+  parsedPrices: JSON.parse(demoMarket.outcomePrices),
+  parsedClobTokenIds: [],
+};
+
+export default function DemoMarketDetailClient() {
   const [agentStarted, setAgentStarted] = useState<boolean>(false);
-
-  useEffect(() => {
-    if (initialMarketData) {
-      // Calculate derived values
-      const firstToken = initialMarketData.tokens[0];
-      const lastTradePrice = firstToken?.price || 0;
-
-      const parsedMarket: ParsedMarketData = {
-        ...initialMarketData,
-        parsedOutcomes: initialMarketData.tokens.map((token) => token.outcome),
-        parsedPrices: initialMarketData.tokens.map((token) => token.price),
-        parsedClobTokenIds: initialMarketData.tokens.map(
-          (token) => token.token_id
-        ),
-        // Set default values for optional fields
-        volume24hr: 0,
-        volumeNum: 0,
-        liquidityNum: 0,
-        oneDayPriceChange: 0,
-        lastTradePrice,
-        bestBid: lastTradePrice * 0.99, // Example default values
-        bestAsk: lastTradePrice * 1.01,
-        spread: 0.02,
-      };
-      setMarket(parsedMarket);
-      setLoading(false);
-    }
-  }, [initialMarketData]);
-
-  if (loading || !market) {
-    return (
-      <div className="w-full h-96 flex items-center justify-center">
-        <div className="flex flex-col items-center gap-4">
-          <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
-          <p className="text-muted-foreground">Loading market data...</p>
-        </div>
-      </div>
-    );
-  }
+  const market = parsedDemoMarket;
 
   const priceChangeColor =
-    (market.oneDayPriceChange || 0) >= 0 ? "text-green-500" : "text-red-500";
+    market.oneDayPriceChange >= 0 ? "text-green-500" : "text-red-500";
   const priceChangeIcon =
-    (market.oneDayPriceChange || 0) >= 0 ? (
+    market.oneDayPriceChange >= 0 ? (
       <ArrowUpIcon className="w-4 h-4" />
     ) : (
       <ArrowDownIcon className="w-4 h-4" />
@@ -99,28 +82,28 @@ export default function MarketDetailClient({
             <StatCard
               icon={<DollarSignIcon className="w-5 h-5" />}
               title="24h Volume"
-              value={`$${(market.volume24hr || 0).toLocaleString(undefined, {
+              value={`$${market.volume24hr.toLocaleString(undefined, {
                 maximumFractionDigits: 0,
               })}`}
             />
             <StatCard
               icon={<BarChart3Icon className="w-5 h-5" />}
               title="Total Volume"
-              value={`$${(market.volumeNum || 0).toLocaleString(undefined, {
+              value={`$${market.volumeNum.toLocaleString(undefined, {
                 maximumFractionDigits: 0,
               })}`}
             />
             <StatCard
               icon={<ChartAreaIcon className="w-5 h-5" />}
               title="Liquidity"
-              value={`$${(market.liquidityNum || 0).toLocaleString(undefined, {
+              value={`$${market.liquidityNum.toLocaleString(undefined, {
                 maximumFractionDigits: 0,
               })}`}
             />
             <StatCard
               icon={<TimerIcon className="w-5 h-5" />}
               title="Ends"
-              value={format(new Date(market.end_date_iso), "MMM d, yyyy")}
+              value={format(new Date(market.endDate), "MMM d, yyyy")}
             />
           </div>
 
@@ -146,10 +129,7 @@ export default function MarketDetailClient({
                           )}
                         >
                           {priceChangeIcon}
-                          {Math.abs(
-                            (market.oneDayPriceChange || 0) * 100
-                          ).toFixed(1)}
-                          %
+                          {Math.abs(market.oneDayPriceChange * 100).toFixed(1)}%
                         </span>
                       )}
                     </div>
@@ -164,19 +144,19 @@ export default function MarketDetailClient({
                 <div className="flex items-center justify-between">
                   <span className="text-muted-foreground">Best Bid</span>
                   <span className="font-medium">
-                    {((market.bestBid || 0) * 100).toFixed(1)}%
+                    {(market.bestBid * 100).toFixed(1)}%
                   </span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-muted-foreground">Best Ask</span>
                   <span className="font-medium">
-                    {((market.bestAsk || 0) * 100).toFixed(1)}%
+                    {(market.bestAsk * 100).toFixed(1)}%
                   </span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-muted-foreground">Spread</span>
                   <span className="font-medium">
-                    {((market.spread || 0) * 100).toFixed(2)}%
+                    {(market.spread * 100).toFixed(2)}%
                   </span>
                 </div>
               </div>
@@ -205,7 +185,7 @@ export default function MarketDetailClient({
                 <div>
                   <h2 className="text-xl font-semibold">{market.question}</h2>
                   <p className="text-sm text-muted-foreground mt-1">
-                    Ends {format(new Date(market.end_date_iso), "MMM d, yyyy")}
+                    Ends {format(new Date(market.endDate), "MMM d, yyyy")}
                   </p>
                 </div>
               </div>
@@ -218,7 +198,7 @@ export default function MarketDetailClient({
                   <p className="text-sm text-muted-foreground">24h Volume</p>
                   <p className="font-medium">
                     $
-                    {(market.volume24hr || 0).toLocaleString(undefined, {
+                    {market.volume24hr.toLocaleString(undefined, {
                       maximumFractionDigits: 0,
                     })}
                   </p>
@@ -227,7 +207,7 @@ export default function MarketDetailClient({
                   <p className="text-sm text-muted-foreground">Total Volume</p>
                   <p className="font-medium">
                     $
-                    {(market.volumeNum || 0).toLocaleString(undefined, {
+                    {market.volumeNum.toLocaleString(undefined, {
                       maximumFractionDigits: 0,
                     })}
                   </p>
@@ -236,7 +216,7 @@ export default function MarketDetailClient({
                   <p className="text-sm text-muted-foreground">Current Price</p>
                   <div className="flex items-center gap-2">
                     <p className="font-medium">
-                      {((market.lastTradePrice || 0) * 100).toFixed(1)}%
+                      {(market.lastTradePrice * 100).toFixed(1)}%
                     </p>
                     <span
                       className={cn(
@@ -245,10 +225,7 @@ export default function MarketDetailClient({
                       )}
                     >
                       {priceChangeIcon}
-                      {Math.abs((market.oneDayPriceChange || 0) * 100).toFixed(
-                        1
-                      )}
-                      %
+                      {Math.abs(market.oneDayPriceChange * 100).toFixed(1)}%
                     </span>
                   </div>
                 </div>
@@ -256,7 +233,7 @@ export default function MarketDetailClient({
                   <p className="text-sm text-muted-foreground">Liquidity</p>
                   <p className="font-medium">
                     $
-                    {(market.liquidityNum || 0).toLocaleString(undefined, {
+                    {market.liquidityNum.toLocaleString(undefined, {
                       maximumFractionDigits: 0,
                     })}
                   </p>
@@ -266,7 +243,7 @@ export default function MarketDetailClient({
           </div>
 
           <div className="lg:row-span-2">
-            <AgentConsole marketId={parseInt(marketId)} />
+            <AgentConsole marketId={parseInt(market.id)} />
           </div>
         </div>
       )}

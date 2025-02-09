@@ -1,5 +1,5 @@
-import { use } from "react";
 import MarketDetailClient from "@/components/market-detail-client";
+import { fetchMarketData } from "@/lib/actions/fetchMarketData";
 
 export default async function MarketDetailPage({
   params,
@@ -7,7 +7,10 @@ export default async function MarketDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const resolvedParams = await params;
-  const marketId = parseInt(resolvedParams.id, 10);
+  const marketId = resolvedParams.id;
+  const marketData = await fetchMarketData(marketId);
 
-  return <MarketDetailClient marketId={marketId} />;
+  return (
+    <MarketDetailClient marketId={marketId} initialMarketData={marketData} />
+  );
 }
