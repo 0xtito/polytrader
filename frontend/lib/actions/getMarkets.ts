@@ -1,6 +1,6 @@
 "use server";
 
-interface Token {
+export interface Token {
   token_id: string;
   outcome: string;
 }
@@ -23,6 +23,7 @@ export interface Market {
   minimum_tick_size: string;
   description: string;
   category: string;
+  end_date: string;
   end_date_iso: string;
   game_start_time: string;
   question: string;
