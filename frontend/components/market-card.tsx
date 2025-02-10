@@ -43,7 +43,7 @@ export default function MarketCard({ market }: MarketCardProps) {
           <div className="flex items-center justify-between text-sm">
             <span className="text-muted-foreground">Ends</span>
             <span className="font-medium">
-              {format(new Date(market.end_date_iso), "MMM d, yyyy")}
+              {format(new Date(market.end_date), "MMM d, yyyy")}
             </span>
           </div>
 

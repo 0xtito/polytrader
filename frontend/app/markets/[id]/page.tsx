@@ -1,5 +1,7 @@
 import MarketDetailClient from "@/components/market-detail-client";
-import { fetchMarketData } from "@/lib/actions/fetchMarketData";
+// import { fetchGammaMarketData } from "@/lib/actions/get-gamma-market";
+// import { fetchMarketData } from "@/lib/actions/fetchMarketData";
+import { GammaMarket, getGammaMarkets } from "@/lib/actions/get-gamma-markets";
 
 export default async function MarketDetailPage({
   params,
@@ -8,9 +10,16 @@ export default async function MarketDetailPage({
 }) {
   const resolvedParams = await params;
   const marketId = resolvedParams.id;
-  const marketData = await fetchMarketData(marketId);
+  const marketData = await getGammaMarkets(1, 0, { marketId });
+
+  if (!marketData.markets || marketData.markets.length === 0) {
+    throw new Error(`Market with ID ${marketId} not found`);
+  }
 
   return (
-    <MarketDetailClient marketId={marketId} initialMarketData={marketData} />
+    <MarketDetailClient
+      marketId={marketId}
+      initialMarketData={marketData.markets[0]}
+    />
   );
 }

@@ -11,46 +11,26 @@ import {
   DollarSignIcon,
 } from "lucide-react";
 import AgentConsole from "@/components/agent-console";
-import { PolymarketData, ParsedMarketData } from "@/types/market-types";
 import { cn } from "@/lib/utils";
+import StreamingAgentConsole from "./streaming-agent-console";
+import { GammaMarket } from "@/lib/actions/get-gamma-markets";
 
 interface MarketDetailClientProps {
   marketId: string;
-  initialMarketData: PolymarketData;
+  initialMarketData: GammaMarket;
 }
 
 export default function MarketDetailClient({
   marketId,
   initialMarketData,
 }: MarketDetailClientProps) {
-  const [market, setMarket] = useState<ParsedMarketData | null>(null);
+  const [market, setMarket] = useState<GammaMarket | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [agentStarted, setAgentStarted] = useState<boolean>(false);
 
   useEffect(() => {
     if (initialMarketData) {
-      // Calculate derived values
-      const firstToken = initialMarketData.tokens[0];
-      const lastTradePrice = firstToken?.price || 0;
-
-      const parsedMarket: ParsedMarketData = {
-        ...initialMarketData,
-        parsedOutcomes: initialMarketData.tokens.map((token) => token.outcome),
-        parsedPrices: initialMarketData.tokens.map((token) => token.price),
-        parsedClobTokenIds: initialMarketData.tokens.map(
-          (token) => token.token_id
-        ),
-        // Set default values for optional fields
-        volume24hr: 0,
-        volumeNum: 0,
-        liquidityNum: 0,
-        oneDayPriceChange: 0,
-        lastTradePrice,
-        bestBid: lastTradePrice * 0.99, // Example default values
-        bestAsk: lastTradePrice * 1.01,
-        spread: 0.02,
-      };
-      setMarket(parsedMarket);
+      setMarket(initialMarketData);
       setLoading(false);
     }
   }, [initialMarketData]);
@@ -66,14 +46,9 @@ export default function MarketDetailClient({
     );
   }
 
-  const priceChangeColor =
-    (market.oneDayPriceChange || 0) >= 0 ? "text-green-500" : "text-red-500";
-  const priceChangeIcon =
-    (market.oneDayPriceChange || 0) >= 0 ? (
-      <ArrowUpIcon className="w-4 h-4" />
-    ) : (
-      <ArrowDownIcon className="w-4 h-4" />
-    );
+  // No price change data in Gamma API
+  const priceChangeColor = "text-gray-500";
+  const priceChangeIcon = <ArrowUpIcon className="w-4 h-4" />;
 
   return (
     <div className="container mx-auto p-6 space-y-6">
@@ -82,13 +57,13 @@ export default function MarketDetailClient({
           <div className="flex items-start gap-6">
             <div className="w-24 h-24 rounded-lg overflow-hidden">
               <img
-                src={market.image}
-                alt={market.question}
+                src={market.imageUrl}
+                alt={market.title}
                 className="w-full h-full object-cover"
               />
             </div>
             <div className="flex-1">
-              <h1 className="text-3xl font-bold mb-2">{market.question}</h1>
+              <h1 className="text-3xl font-bold mb-2">{market.title}</h1>
               <p className="text-muted-foreground whitespace-pre-line">
                 {market.description}
               </p>
@@ -98,29 +73,27 @@ export default function MarketDetailClient({
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             <StatCard
               icon={<DollarSignIcon className="w-5 h-5" />}
-              title="24h Volume"
-              value={`$${(market.volume24hr || 0).toLocaleString(undefined, {
+              title="Volume"
+              value={`$${market.volumeNum.toLocaleString(undefined, {
                 maximumFractionDigits: 0,
               })}`}
             />
             <StatCard
               icon={<BarChart3Icon className="w-5 h-5" />}
-              title="Total Volume"
-              value={`$${(market.volumeNum || 0).toLocaleString(undefined, {
+              title="Liquidity"
+              value={`$${market.liquidityNum.toLocaleString(undefined, {
                 maximumFractionDigits: 0,
               })}`}
             />
             <StatCard
               icon={<ChartAreaIcon className="w-5 h-5" />}
-              title="Liquidity"
-              value={`$${(market.liquidityNum || 0).toLocaleString(undefined, {
-                maximumFractionDigits: 0,
-              })}`}
+              title="Status"
+              value={market.status.toUpperCase()}
             />
             <StatCard
               icon={<TimerIcon className="w-5 h-5" />}
               title="Ends"
-              value={format(new Date(market.end_date_iso), "MMM d, yyyy")}
+              value={format(new Date(market.endDate), "MMM d, yyyy")}
             />
           </div>
 
@@ -128,7 +101,7 @@ export default function MarketDetailClient({
             <div className="rounded-xl border bg-card p-6">
               <h2 className="text-xl font-semibold mb-4">Current Prices</h2>
               <div className="space-y-4">
-                {market.parsedOutcomes.map((outcome, index) => (
+                {market.outcomes.map((outcome, index) => (
                   <div
                     key={outcome}
                     className="flex items-center justify-between"
@@ -136,22 +109,11 @@ export default function MarketDetailClient({
                     <span className="font-medium">{outcome}</span>
                     <div className="flex items-center gap-2">
                       <span className="text-2xl font-bold">
-                        {(market.parsedPrices[index] * 100).toFixed(1)}%
+                        {(
+                          parseFloat(market.outcomePrices[index]) * 100
+                        ).toFixed(1)}
+                        %
                       </span>
-                      {index === 0 && (
-                        <span
-                          className={cn(
-                            "flex items-center text-sm",
-                            priceChangeColor
-                          )}
-                        >
-                          {priceChangeIcon}
-                          {Math.abs(
-                            (market.oneDayPriceChange || 0) * 100
-                          ).toFixed(1)}
-                          %
-                        </span>
-                      )}
                     </div>
                   </div>
                 ))}
@@ -159,24 +121,22 @@ export default function MarketDetailClient({
             </div>
 
             <div className="rounded-xl border bg-card p-6">
-              <h2 className="text-xl font-semibold mb-4">Order Book</h2>
+              <h2 className="text-xl font-semibold mb-4">Market Info</h2>
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground">Best Bid</span>
-                  <span className="font-medium">
-                    {((market.bestBid || 0) * 100).toFixed(1)}%
-                  </span>
+                  <span className="text-muted-foreground">Category</span>
+                  <span className="font-medium">{market.category}</span>
                 </div>
+                {market.subcategory && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-muted-foreground">Subcategory</span>
+                    <span className="font-medium">{market.subcategory}</span>
+                  </div>
+                )}
                 <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground">Best Ask</span>
+                  <span className="text-muted-foreground">Order Book</span>
                   <span className="font-medium">
-                    {((market.bestAsk || 0) * 100).toFixed(1)}%
-                  </span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground">Spread</span>
-                  <span className="font-medium">
-                    {((market.spread || 0) * 100).toFixed(2)}%
+                    {market.enableOrderBook ? "Enabled" : "Disabled"}
                   </span>
                 </div>
               </div>
@@ -198,14 +158,14 @@ export default function MarketDetailClient({
             <div className="rounded-xl border bg-card p-6">
               <div className="flex items-start gap-4">
                 <img
-                  src={market.image}
-                  alt={market.question}
+                  src={market.imageUrl}
+                  alt={market.title}
                   className="w-16 h-16 rounded-lg"
                 />
                 <div>
-                  <h2 className="text-xl font-semibold">{market.question}</h2>
+                  <h2 className="text-xl font-semibold">{market.title}</h2>
                   <p className="text-sm text-muted-foreground mt-1">
-                    Ends {format(new Date(market.end_date_iso), "MMM d, yyyy")}
+                    Ends {format(new Date(market.endDate), "MMM d, yyyy")}
                   </p>
                 </div>
               </div>
@@ -215,58 +175,37 @@ export default function MarketDetailClient({
               <h3 className="font-semibold">Market Stats</h3>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <p className="text-sm text-muted-foreground">24h Volume</p>
+                  <p className="text-sm text-muted-foreground">Volume</p>
                   <p className="font-medium">
                     $
-                    {(market.volume24hr || 0).toLocaleString(undefined, {
+                    {market.volumeNum.toLocaleString(undefined, {
                       maximumFractionDigits: 0,
                     })}
                   </p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Total Volume</p>
-                  <p className="font-medium">
-                    $
-                    {(market.volumeNum || 0).toLocaleString(undefined, {
-                      maximumFractionDigits: 0,
-                    })}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Current Price</p>
-                  <div className="flex items-center gap-2">
-                    <p className="font-medium">
-                      {((market.lastTradePrice || 0) * 100).toFixed(1)}%
-                    </p>
-                    <span
-                      className={cn(
-                        "flex items-center text-sm",
-                        priceChangeColor
-                      )}
-                    >
-                      {priceChangeIcon}
-                      {Math.abs((market.oneDayPriceChange || 0) * 100).toFixed(
-                        1
-                      )}
-                      %
-                    </span>
-                  </div>
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Liquidity</p>
                   <p className="font-medium">
                     $
-                    {(market.liquidityNum || 0).toLocaleString(undefined, {
+                    {market.liquidityNum.toLocaleString(undefined, {
                       maximumFractionDigits: 0,
                     })}
                   </p>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground">Status</p>
+                  <p className="font-medium">{market.status.toUpperCase()}</p>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground">Category</p>
+                  <p className="font-medium">{market.category}</p>
                 </div>
               </div>
             </div>
           </div>
 
           <div className="lg:row-span-2">
-            <AgentConsole marketId={parseInt(marketId)} />
+            <StreamingAgentConsole marketId={parseInt(marketId)} />
           </div>
         </div>
       )}
