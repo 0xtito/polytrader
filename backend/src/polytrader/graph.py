@@ -62,15 +62,35 @@ async def fetch_market_data(state: State) -> Dict[str, Any]:
             "proceed": False,
         }
 
-    market_json = gamma_client.get_market(market_id)
-    state.market_data = market_json  # raw dict
-    print("Raw market data as json:")
-    print(json.dumps(market_json, indent=2))
-    return {
-        "messages": [f"Fetched market data for ID={market_id}."],
-        "proceed": True,
-        "market_data": market_json,
-    }
+    try:
+        # Convert market_id to int for API call, but keep original string version
+        market_id_int = int(market_id)
+        market_json = gamma_client.get_market(market_id_int)
+        
+        # Convert any large integers in the response to strings
+        if "id" in market_json:
+            market_json["id"] = str(market_json["id"])
+        if "clobTokenIds" in market_json:
+            market_json["clobTokenIds"] = [str(tid) for tid in json.loads(market_json["clobTokenIds"])]
+            
+        state.market_data = market_json  # raw dict
+        print("Raw market data as json:")
+        print(json.dumps(market_json, indent=2))
+        return {
+            "messages": [f"Fetched market data for ID={market_id}."],
+            "proceed": True,
+            "market_data": market_json,
+        }
+    except ValueError as e:
+        return {
+            "messages": [f"Invalid market ID format: {market_id}"],
+            "proceed": False,
+        }
+    except Exception as e:
+        return {
+            "messages": [f"Error fetching market data: {str(e)}"],
+            "proceed": False,
+        }
 
 ###### RESEARCH ####### 
 
@@ -128,7 +148,7 @@ async def research_agent_node(
     raw_model = init_model(config)
     model = raw_model.bind_tools([
         search_exa,
-        search_tavily,
+        # search_tavily,
         external_research_info_tool
     ], tool_choice="any")
 
@@ -197,7 +217,7 @@ async def reflect_on_research_node(
 
     # Build the system message
     market_data_str = json.dumps(state.market_data or {}, indent=2)
-    system_text = """You are evaluating the quality of research gathered about a market.
+    system_text = """You are evaluating the quality of web research gathered about a market.
 Your role is to determine if the research is sufficient to proceed with market analysis.
 """
     system_msg = SystemMessage(content=f"{system_text}\n\nMarket data:\n{market_data_str}")
@@ -605,12 +625,12 @@ async def trade_agent_node(
                     "enum": possible_sides
                 },
                 "market_id": {
-                    "type": "integer",
-                    "description": "The market ID for which the trade is being made."
+                    "type": "string",
+                    "description": "The market ID for which the trade is being made (as a string)."
                 },
                 "token_id": {
-                    "type": "number",
-                    "description": "The token ID that the user should trade or hold. This can be found in the market details."
+                    "type": "string",
+                    "description": "The token ID that the user should trade or hold (as a string)."
                 },
                 "size": {
                     "type": "number",
@@ -727,16 +747,16 @@ async def reflect_on_trade_node(
         "side": lambda x: x in ["BUY", "SELL", "NO_TRADE"],
         "reason": lambda x: isinstance(x, str) and len(x) > 0,
         "confidence": lambda x: isinstance(x, (int, float)) and 0 <= float(x) <= 1,
-        "market_id": lambda x: isinstance(x, int),
+        "market_id": lambda x: isinstance(x, str),
         "token_id": lambda x: isinstance(x, str),
-        "size": lambda x: x is not None
+        "size": lambda x: isinstance(x, (int, float))
     }
 
     system_text = """You are validating a trade decision. Your task is to ensure the decision is complete and properly formatted.
 
 Required Fields:
 - side: Must be one of "BUY", "SELL", "NO_TRADE"
-- market_id: Must be an integer (the ID of the market)
+- market_id: Must be a string
 - token_id: Must be a string
 - size: Must be a number
 - reason: Must be a non-empty string with clear reasoning
@@ -959,7 +979,7 @@ workflow.add_conditional_edges("fetch_market_data", route_after_fetch)
 # Research 
 workflow.add_node("research_tools", ToolNode([
     search_exa,
-    search_tavily
+    # search_tavily
 ]))
 workflow.add_node("research_agent", research_agent_node)
 workflow.add_node("reflect_on_research", reflect_on_research_node)

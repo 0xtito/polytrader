@@ -15,7 +15,7 @@ from langgraph.graph import add_messages
 class InputState:
     """Defines initial input to the graph."""
 
-    market_id: int
+    market_id: str  # Changed from int to str to handle large numbers safely
     custom_instructions: Optional[str] = None
     extraction_schema: dict[str, Any] = field(
         default_factory=lambda: {"headline": "", "summary": "", "source_links": []}

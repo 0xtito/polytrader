@@ -451,7 +451,7 @@ async def trade(
     *,
     state: Annotated[State, InjectedState],
     config: Annotated[RunnableConfig, InjectedToolArg],
-    market_id: Optional[int] = None,
+    market_id: Optional[str] = None,
     token_id: Optional[str] = None,
     size: Optional[float] = None,
     trade_evaluation_of_market_data: Optional[str] = None
