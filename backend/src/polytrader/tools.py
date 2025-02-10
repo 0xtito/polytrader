@@ -271,8 +271,8 @@ async def analysis_get_market_trades(
         trades = poly_client.get_market_trades_events(market_id)
         
         # Get token IDs
-        token_ids = json.loads(state.market_data.get("clobTokenIds", "[]"))
-        
+        token_ids = json.loads(state.market_data.get("clobTokenIds", "[]")) if state.market_data else []
+
         # Get last trade prices for each token
         book_params = [poly_client.BookParams(token_id=tid) for tid in token_ids]
         last_trades = poly_client.get_last_trades_prices(book_params)
@@ -377,13 +377,14 @@ async def analysis_get_historical_trends(
         
         # Analyze sentiment from news results
         sentiment_analysis = []
-        for result in search_results:
-            sentiment_analysis.append({
-                "title": result.get("title", ""),
-                "date": result.get("date", ""),
-                "snippet": result.get("snippet", ""),
-                "url": result.get("url", "")
-            })
+        if search_results:
+            for result in search_results:
+                sentiment_analysis.append({
+                    "title": result.get("title", ""),
+                    "date": result.get("date", ""),
+                    "snippet": result.get("snippet", ""),
+                    "url": result.get("url", "")
+                })
             
         result = {
             "market_id": market_id,
@@ -450,39 +451,61 @@ async def trade(
     *,
     state: Annotated[State, InjectedState],
     config: Annotated[RunnableConfig, InjectedToolArg],
+    market_id: Optional[int] = None,
+    token_id: Optional[str] = None,
+    size: Optional[float] = None,
     trade_evaluation_of_market_data: Optional[str] = None
 ) -> Dict[str, Any]:
-    """Finalize a trade decision."""
+    """Finalize a trade decision or do nothing."""
     logger.info("\n=== Trade Decision Analysis ===")
-    
-    # Format the trade decision with all available analysis data
+
+    # If side is NO_TRADE, do nothing but record the decision
+    if side == "NO_TRADE":
+        trade_decision = {
+            "side": side,
+            "confidence": confidence,
+            "reason": reason,
+            "market_id": market_id,
+            "token_id": token_id,
+            "size": size if size is not None else 0,
+            "trade_evaluation_of_market_data": trade_evaluation_of_market_data,
+        }
+        state.trade_decision = side
+        state.confidence = confidence
+        state.trade_info = trade_decision
+        logger.info("Decision: NO_TRADE. Doing nothing.")
+        return trade_decision
+
+    # If side is BUY or SELL, proceed with normal logic
+
     trade_decision = {
         "side": side,
         "confidence": confidence,
         "reason": reason,
         "trade_evaluation_of_market_data": trade_evaluation_of_market_data,
+        "market_id": market_id,
+        "token_id": token_id,
+        "size": size,
         "market_context": {
-            "market_id": state.market_data.get("id") if state.market_data else None,
-            "question": state.market_data.get("question") if state.market_data else None,
-            "current_prices": state.market_data.get("current_market_prices") if state.market_data else None,
-            "market_details": state.market_details,
-            "orderbook_analysis": state.orderbook_data,
-            "historical_trends": state.historical_trends,
-            "external_research": state.external_research_info
-        }
+            "market_data": state.market_data,
+            "analysis_info": state.analysis_info,
+            "positions": state.positions,
+            "available_funds": state.available_funds
+        },
     }
-    
-    # Store in state
+
+    # Update state
     state.trade_decision = side
     state.confidence = confidence
     state.trade_info = trade_decision
-    
+
     # Log decision
     logger.info(f"Trade Decision: {side}")
     logger.info(f"Confidence: {confidence}")
     logger.info(f"Reasoning: {reason}")
+    logger.info(f"Market ID: {market_id}, Token ID: {token_id}, Size: {size}")
     logger.info(f"Trade Evaluation of Market Data: {trade_evaluation_of_market_data}")
-    
+
     return trade_decision
 
 ################################################################################

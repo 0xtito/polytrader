@@ -20,6 +20,8 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.graph import StateGraph
 from langgraph.prebuilt import ToolNode
 from pydantic import BaseModel, Field
+from langgraph.checkpoint.memory import MemorySaver
+
 
 from polytrader.configuration import Configuration
 from polytrader.gamma import GammaMarketClient
@@ -34,7 +36,6 @@ from polytrader.tools import (
     analysis_get_market_details,
     analysis_get_multi_level_orderbook,
     analysis_get_historical_trends,
-    # analysis_get_external_news,  # REMOVED from analysis agent
 )
 from polytrader.utils import init_model
 
@@ -522,7 +523,8 @@ Analysis Information:
                     name="Analysis",
                     additional_kwargs={"artifact": response.model_dump()},
                     status="success",
-                )            ],
+                )
+            ],
             "decision": "proceed_to_trade"
         }
     else:
@@ -565,36 +567,82 @@ async def trade_agent_node(
     Sub-agent for finalizing trade decisions.
     This node makes the final trade decision based on research and analysis.
     """
+
     configuration = Configuration.from_runnable_config(config)
 
-    # Define the trade decision tool with proper schema
+    ###########################################################################
+    # Evaluate whether user has positions
+    ###########################################################################
+    position_info = state.positions or {}
+    # Check if user has any position for the relevant market or token
+    # The LLM does not necessarily know the token ID yet, so we keep it flexible
+    # We'll just instruct the LLM about what is possible in general:
+    user_has_positions = any(position_info.values())  # True if any positive size
+
+    # The user can do NO_TRADE or BUY in all scenarios
+    # The user can SELL only if they have an existing position
+    # We'll pass a short explanation in the system prompt
+    possible_sides = ["BUY", "NO_TRADE"]
+    if user_has_positions:
+        possible_sides = ["BUY", "SELL", "NO_TRADE"]
+
+    ###########################################################################
+    # Define the trade decision tool with updated schema
+    ###########################################################################
     trade_decision_tool = {
         "name": "TradeDecision",
-        "description": "Call this when you have made your final trade decision. This will record your decision and reasoning.",
+        "description": (
+            "Call this when you have made your final trade decision. "
+            f"You may only set 'side' to one of {possible_sides}. "
+            "This will record your decision and reasoning."
+        ),
         "parameters": {
             "type": "object",
             "properties": {
                 "side": {
                     "type": "string",
-                    "description": "The trading side (must be either 'BUY' or 'SELL')",
-                    "enum": ["BUY", "SELL"]
+                    "description": f"Your trading side. Must be one of: {possible_sides}",
+                    "enum": possible_sides
+                },
+                "market_id": {
+                    "type": "integer",
+                    "description": "The market ID for which the trade is being made."
+                },
+                "token_id": {
+                    "type": "number",
+                    "description": "The token ID that the user should trade or hold. This can be found in the market details."
+                },
+                "size": {
+                    "type": "number",
+                    "description": (
+                        "The size (in USDC or shares) that the user should trade. "
+                        "If side=NO_TRADE, typically set this to 0. "
+                        "Must not exceed 'available_funds' if side=BUY."
+                    )
                 },
                 "reason": {
                     "type": "string",
-                    "description": "Clear and detailed reasoning for the trade decision"
+                    "description": "Clear and detailed reasoning for the trade decision."
                 },
                 "confidence": {
                     "type": "number",
-                    "description": "Confidence level in the decision (0-1)",
+                    "description": "Confidence level in the decision (0-1).",
                     "minimum": 0,
                     "maximum": 1
                 },
                 "trade_evaluation_of_market_data": {
                     "type": "string",
-                    "description": "Evaluation of market data that led to this decision"
+                    "description": "Evaluation of market data that led to this decision."
                 }
             },
-            "required": ["side", "reason", "confidence"]
+            "required": [
+                "side",
+                "market_id",
+                "token_id",
+                "size",
+                "reason",
+                "confidence"
+            ]
         }
     }
 
@@ -606,11 +654,20 @@ Available Information:
 1. Market Data: {json.dumps(state.market_data or {}, indent=2)}
 2. Research Info: {json.dumps(state.external_research_info or {}, indent=2)}
 3. Analysis Info: {json.dumps(state.analysis_info or {}, indent=2)}
+4. User Positions (for this or related markets): {json.dumps(state.positions or {}, indent=2)}
+5. User's Available Funds for a new position: {state.available_funds}
 
-Required Decision Format:
-{json.dumps(trade_decision_tool["parameters"], indent=2)}
+You MAY ONLY choose 'side' from this list: {possible_sides}.
 
-Make your decision by calling the TradeDecision tool ONCE with your final decision.
+If the user does not hold any position in this market, you may NOT choose SELL. 
+You can either buy or do no trade.
+
+If the user already has a position, you can consider SELL as well.
+
+Be sure to respect the user's 'available_funds' if you recommend buying. 
+Do not propose a trade that exceeds these available funds.
+
+When you have finalized your decision, call the TradeDecision tool exactly once.
 """
 
     messages = [HumanMessage(content=system_text)] + state.messages
@@ -667,19 +724,28 @@ async def reflect_on_trade_node(
 
     # Define validation criteria
     required_fields = {
-        "side": lambda x: x in ["BUY", "SELL"],
+        "side": lambda x: x in ["BUY", "SELL", "NO_TRADE"],
         "reason": lambda x: isinstance(x, str) and len(x) > 0,
-        "confidence": lambda x: isinstance(x, (int, float)) and 0 <= float(x) <= 1
+        "confidence": lambda x: isinstance(x, (int, float)) and 0 <= float(x) <= 1,
+        "market_id": lambda x: isinstance(x, int),
+        "token_id": lambda x: isinstance(x, str),
+        "size": lambda x: x is not None
     }
 
     system_text = """You are validating a trade decision. Your task is to ensure the decision is complete and properly formatted.
 
 Required Fields:
-- side: Must be either "BUY" or "SELL"
+- side: Must be one of "BUY", "SELL", "NO_TRADE"
+- market_id: Must be an integer (the ID of the market)
+- token_id: Must be a string
+- size: Must be a number
 - reason: Must be a non-empty string with clear reasoning
 - confidence: Must be a number between 0 and 1
 
 The decision should be clear, well-reasoned, and based on the available market data and analysis.
+If side=NO_TRADE, size can be 0.
+If side=BUY, size must not exceed available funds.
+If side=SELL, user must have a position in the market (though the LLM check is partial).
 """
     system_msg = SystemMessage(content=system_text)
 
@@ -695,6 +761,9 @@ Validation Criteria:
 2. The decision is clear and unambiguous
 3. The reasoning is well-supported by the available data
 4. The confidence level is appropriate given the reasoning
+5. If side=NO_TRADE, ensure size=0
+6. If side=BUY, ensure size does not exceed available_funds
+7. If side=SELL, ensure the user has a position in that token.
 
 Should this trade decision be accepted as final?"""
     
@@ -718,11 +787,29 @@ Should this trade decision be accepted as final?"""
             elif not validator(value):
                 is_valid = False
                 validation_errors.append(f"Invalid value for {field}: {value}")
+        # Additional checks
+        side_val = trade_info.get("side", "")
+        size_val = trade_info.get("size", 0)
+        if side_val == "NO_TRADE" and size_val != 0:
+            is_valid = False
+            validation_errors.append("If side=NO_TRADE, size must be 0.")
+        if side_val == "BUY":
+            if size_val is not None and size_val > state.available_funds:
+                is_valid = False
+                validation_errors.append(f"Cannot BUY with size {size_val} exceeding available funds {state.available_funds}.")
+        if side_val == "SELL":
+            # check position if the user has the token
+            token_val = trade_info.get("token_id", "")
+            if not state.positions or state.positions.get(token_val, 0) <= 0:
+                is_valid = False
+                validation_errors.append(f"Cannot SELL token {token_val} if user holds no position in it.")
     else:
         is_valid = False
         validation_errors.append("No trade decision provided")
 
-    if is_valid and response.is_satisfactory:
+    final_is_satisfactory = response.is_satisfactory and is_valid
+
+    if final_is_satisfactory:
         return {
             "trade_info": trade_info,
             "messages": [
@@ -737,12 +824,16 @@ Should this trade decision be accepted as final?"""
             "decision": "end"
         }
     else:
-        error_message = "\n".join(validation_errors) if validation_errors else response.improvement_instructions
+        # Combine pydantic-based improvement instructions with our local validation errors
+        combined_errors = "\n".join(validation_errors)
+        if response.improvement_instructions:
+            combined_errors += f"\nAdditional suggestions: {response.improvement_instructions}"
+
         return {
             "messages": [
                 ToolMessage(
                     tool_call_id=last_message.tool_calls[0]["id"] if last_message.tool_calls else "",
-                    content=f"Trade decision needs improvement:\n{error_message}",
+                    content=f"Trade decision needs improvement:\n{combined_errors}",
                     name="Trade",
                     additional_kwargs={"artifact": response.model_dump()},
                     status="error",
@@ -900,6 +991,9 @@ workflow.add_edge("trade_tools", "trade_agent")
 workflow.add_conditional_edges("trade_agent", route_after_trade)
 workflow.add_conditional_edges("reflect_on_trade", route_after_reflect_on_trade)
 
+# Set up memory
+memory = MemorySaver()
+
 # Compile
-graph = workflow.compile()
+graph = workflow.compile(checkpointer=memory)
 graph.name = "PolymarketAgent"

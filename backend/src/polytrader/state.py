@@ -5,7 +5,7 @@
 
 """Define states for Polymarket agent workflow."""
 from dataclasses import dataclass, field
-from typing import Annotated, Any, List, Optional
+from typing import Annotated, Any, List, Optional, Dict, Union
 
 from langchain.schema import BaseMessage
 from langgraph.graph import add_messages
@@ -15,7 +15,7 @@ from langgraph.graph import add_messages
 class InputState:
     """Defines initial input to the graph."""
 
-    market_id: int 
+    market_id: int
     custom_instructions: Optional[str] = None
     extraction_schema: dict[str, Any] = field(
         default_factory=lambda: {"headline": "", "summary": "", "source_links": []}
@@ -24,6 +24,21 @@ class InputState:
     """
     Tracks the current state of the external research fetched by the agent.
     """
+
+    # New fields for positions and funds
+    positions: Optional[Dict[str, float]] = None
+    """
+    A dictionary representing the current user positions for each token_id in this market.
+    e.g. positions = {"1234": 10.0} means user holds 10 units of token_id=1234
+    If None or empty, the user has no positions in this market.
+    """
+
+    available_funds: float = 10.0
+    """
+    Amount of funds (USDC) the user has available to open new positions.
+    Default is 10.0 if not provided.
+    """
+
 
 @dataclass(kw_only=True)
 class State(InputState):
