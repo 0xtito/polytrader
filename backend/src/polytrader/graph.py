@@ -567,25 +567,56 @@ async def trade_agent_node(
     """
     configuration = Configuration.from_runnable_config(config)
 
-    trade_prompt_schema = {
-        "side": "",
-        "reason": "",
-        "confidence": 0.0
+    # Define the trade decision tool with proper schema
+    trade_decision_tool = {
+        "name": "TradeDecision",
+        "description": "Call this when you have made your final trade decision. This will record your decision and reasoning.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "side": {
+                    "type": "string",
+                    "description": "The trading side (must be either 'BUY' or 'SELL')",
+                    "enum": ["BUY", "SELL"]
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Clear and detailed reasoning for the trade decision"
+                },
+                "confidence": {
+                    "type": "number",
+                    "description": "Confidence level in the decision (0-1)",
+                    "minimum": 0,
+                    "maximum": 1
+                },
+                "trade_evaluation_of_market_data": {
+                    "type": "string",
+                    "description": "Evaluation of market data that led to this decision"
+                }
+            },
+            "required": ["side", "reason", "confidence"]
+        }
     }
 
-    system_text = configuration.trade_agent_prompt.format(
-        info=json.dumps(trade_prompt_schema, indent=2),
-        market_data=json.dumps(state.market_data or {}, indent=2),
-        question=state.market_data["question"],
-        description=state.market_data["description"],
-        outcomes=state.market_data["outcomes"]
-    )
+    # Build a comprehensive prompt that includes all available information
+    system_text = f"""You are a trade decision maker. Your task is to make a SINGLE, CLEAR trade decision based on all available information.
+You must use the TradeDecision tool ONCE to record your decision. Do not make multiple trade calls.
+
+Available Information:
+1. Market Data: {json.dumps(state.market_data or {}, indent=2)}
+2. Research Info: {json.dumps(state.external_research_info or {}, indent=2)}
+3. Analysis Info: {json.dumps(state.analysis_info or {}, indent=2)}
+
+Required Decision Format:
+{json.dumps(trade_decision_tool["parameters"], indent=2)}
+
+Make your decision by calling the TradeDecision tool ONCE with your final decision.
+"""
 
     messages = [HumanMessage(content=system_text)] + state.messages
 
     raw_model = init_model(config)
-    # Bind the 'trade' function directly
-    model = raw_model.bind_tools([trade], tool_choice="any")
+    model = raw_model.bind_tools([trade, trade_decision_tool], tool_choice="any")
 
     response = await model.ainvoke(messages)
     if not isinstance(response, AIMessage):
@@ -594,18 +625,20 @@ async def trade_agent_node(
     trade_info = None
     if hasattr(response, "tool_calls") and response.tool_calls:
         for tool_call in response.tool_calls:
-            if tool_call["name"] == "trade":
+            if tool_call["name"] == "TradeDecision":
                 trade_info = tool_call["args"]
                 break
         if trade_info is not None:
-            response.tool_calls = [
-                tc for tc in response.tool_calls if tc["name"] == "trade"
-            ]
+            response.tool_calls = [tc for tc in response.tool_calls if tc["name"] == "TradeDecision"]
+            # Store the trade info in state
+            state.trade_info = trade_info
+            state.trade_decision = trade_info.get("side")
+            state.confidence = float(trade_info.get("confidence", 0))
 
     new_messages: List[BaseMessage] = [response]
     if not response.tool_calls:
         new_messages.append(
-            HumanMessage(content="Please respond by calling the 'trade' tool to finalize your decision.")
+            HumanMessage(content="Please make your final trade decision by calling the TradeDecision tool ONCE.")
         )
 
     return {
@@ -622,8 +655,8 @@ async def reflect_on_trade_node(
     state: State, *, config: Optional[RunnableConfig] = None
 ) -> Dict[str, Any]:
     """
-    This node checks if the trade decision is satisfactory.
-    It uses a structured output model to evaluate the quality of the trade decision.
+    This node validates that the trade decision is complete and properly formatted.
+    If valid, the workflow will end. If invalid, it will request a new trade decision.
     """
     last_message = state.messages[-1]
     if not isinstance(last_message, AIMessage):
@@ -632,22 +665,38 @@ async def reflect_on_trade_node(
             f" Got: {type(last_message)}"
         )
 
-    market_data_str = json.dumps(state.market_data or {}, indent=2)
-    system_text = """You are evaluating the quality of a trade decision.
-Your role is to determine if the trade decision is well-reasoned and ready to execute.
+    # Define validation criteria
+    required_fields = {
+        "side": lambda x: x in ["BUY", "SELL"],
+        "reason": lambda x: isinstance(x, str) and len(x) > 0,
+        "confidence": lambda x: isinstance(x, (int, float)) and 0 <= float(x) <= 1
+    }
+
+    system_text = """You are validating a trade decision. Your task is to ensure the decision is complete and properly formatted.
+
+Required Fields:
+- side: Must be either "BUY" or "SELL"
+- reason: Must be a non-empty string with clear reasoning
+- confidence: Must be a number between 0 and 1
+
+The decision should be clear, well-reasoned, and based on the available market data and analysis.
 """
-    system_msg = SystemMessage(content=f"{system_text}\n\nMarket data:\n{market_data_str}")
+    system_msg = SystemMessage(content=system_text)
 
     messages = [system_msg] + state.messages[:-1]
     
     trade_info = state.trade_info
-    checker_prompt = """I am evaluating the trade decision below. 
-Is this a well-reasoned trade decision ready to execute? Give your reasoning.
-Consider factors like risk/reward, position size, and market timing.
-If you don't think it's ready, be specific about what needs to be reconsidered.
+    checker_prompt = """Evaluate the following trade decision:
 
-Trade Decision:
-{trade_info}"""
+{trade_info}
+
+Validation Criteria:
+1. All required fields are present and properly formatted
+2. The decision is clear and unambiguous
+3. The reasoning is well-supported by the available data
+4. The confidence level is appropriate given the reasoning
+
+Should this trade decision be accepted as final?"""
     
     p1 = checker_prompt.format(trade_info=json.dumps(trade_info or {}, indent=2))
     messages.append(HumanMessage(content=p1))
@@ -656,13 +705,30 @@ Trade Decision:
     bound_model = raw_model.with_structured_output(TradeIsSatisfactory)
     response = cast(TradeIsSatisfactory, await bound_model.ainvoke(messages))
 
-    if response.is_satisfactory and trade_info:
+    # Validate required fields
+    is_valid = True
+    validation_errors = []
+    
+    if trade_info:
+        for field, validator in required_fields.items():
+            value = trade_info.get(field)
+            if value is None:
+                is_valid = False
+                validation_errors.append(f"Missing required field: {field}")
+            elif not validator(value):
+                is_valid = False
+                validation_errors.append(f"Invalid value for {field}: {value}")
+    else:
+        is_valid = False
+        validation_errors.append("No trade decision provided")
+
+    if is_valid and response.is_satisfactory:
         return {
             "trade_info": trade_info,
             "messages": [
                 ToolMessage(
                     tool_call_id=last_message.tool_calls[0]["id"] if last_message.tool_calls else "",
-                    content="\n".join(response.reason),
+                    content="Trade decision validated successfully:\n" + "\n".join(response.reason),
                     name="Trade",
                     additional_kwargs={"artifact": response.model_dump()},
                     status="success",
@@ -671,11 +737,12 @@ Trade Decision:
             "decision": "end"
         }
     else:
+        error_message = "\n".join(validation_errors) if validation_errors else response.improvement_instructions
         return {
             "messages": [
                 ToolMessage(
                     tool_call_id=last_message.tool_calls[0]["id"] if last_message.tool_calls else "",
-                    content=f"Trade decision needs improvement:\n{response.improvement_instructions}",
+                    content=f"Trade decision needs improvement:\n{error_message}",
                     name="Trade",
                     additional_kwargs={"artifact": response.model_dump()},
                     status="error",
@@ -756,32 +823,36 @@ def route_after_reflect_on_analysis(state: State, *, config: Optional[RunnableCo
     
     return "analysis_agent"
 
-def route_after_trade(state: State) -> Literal["trade_agent", "trade_tools", "reflect_on_trade"]:
-    """After trade agent, check if we need to execute tools or reflect."""
+def route_after_trade(state: State) -> Literal["trade_agent", "reflect_on_trade", "trade_tools"]:
+    """After trade agent, route to reflection if a trade decision was made."""
     last_msg = state.messages[-1] if state.messages else None
     
     if not isinstance(last_msg, AIMessage):
         return "trade_agent"
     
-    if last_msg.tool_calls and last_msg.tool_calls[0]["name"] == "Trade":
+    # Check if we have a TradeDecision tool call
+    if last_msg.tool_calls and any(tc["name"] == "TradeDecision" for tc in last_msg.tool_calls):
         return "reflect_on_trade"
     else:
         return "trade_tools"
 
 def route_after_reflect_on_trade(state: State, *, config: Optional[RunnableConfig] = None) -> Literal["trade_agent", "__end__"]:
+    """After reflection, either end the workflow or request a new trade decision."""
     configuration = Configuration.from_runnable_config(config)
 
     last_msg = state.messages[-1] if state.messages else None
     if not isinstance(last_msg, ToolMessage):
         return "trade_agent"
     
+    # If validation was successful, end the workflow
     if last_msg.status == "success":
         return "__end__"
-    elif last_msg.status == "error":
-        if state.loop_step >= configuration.max_loops:
-            return "__end__"
-        return "trade_agent"
     
+    # If we've exceeded max loops, end anyway
+    if state.loop_step >= configuration.max_loops:
+        return "__end__"
+    
+    # Otherwise, try one more trade decision
     return "trade_agent"
 
 ###############################################################################
