@@ -2,20 +2,20 @@
 
 import { Client } from "@langchain/langgraph-sdk";
 
-// This would come from your environment variables
 const DEPLOYMENT_URL = process.env.LANGGRAPH_DEPLOYMENT_URL;
-const ASSISTANT_ID = "agent";
+const ASSISTANT_ID = "polytrader";
 
 export async function streamAgentAnalysis(marketId: number) {
   try {
+    console.log("DEPLOYMENT_URL", DEPLOYMENT_URL);
     const client = new Client({ apiUrl: DEPLOYMENT_URL! });
 
-    // Create thread
+    console.log("client", client);
+
     const thread = await client.threads.create();
 
-    // Prepare input with market_id
     const input = {
-      market_id: marketId,
+      market_id: marketId.toString(),
       custom_instructions: null,
       extraction_schema: {
         headline: "",
@@ -27,10 +27,25 @@ export async function streamAgentAnalysis(marketId: number) {
     // Return the stream
     return client.runs.stream(thread.thread_id, ASSISTANT_ID, {
       input,
-      streamMode: "values",
+      streamMode: "updates",
     });
   } catch (error) {
     console.error("Error in streamAgentAnalysis:", error);
     throw error;
   }
+}
+
+export async function writeStreamToFile(streamData: any) {
+  const date = new Date().toISOString().split("T")[0];
+  const fs = require("fs");
+  const path = require("path");
+
+  // Create data directory if it doesn't exist
+  const dataDir = path.join(process.cwd(), "data");
+  if (!fs.existsSync(dataDir)) {
+    fs.mkdirSync(dataDir, { recursive: true });
+  }
+
+  const filename = path.join(dataDir, `stream_${date}.json`);
+  fs.writeFileSync(filename, JSON.stringify(streamData, null, 2));
 }

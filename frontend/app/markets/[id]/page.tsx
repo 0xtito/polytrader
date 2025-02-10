@@ -1,7 +1,5 @@
 import MarketDetailClient from "@/components/market-detail-client";
-// import { fetchGammaMarketData } from "@/lib/actions/get-gamma-market";
-// import { fetchMarketData } from "@/lib/actions/fetchMarketData";
-import { GammaMarket, getGammaMarkets } from "@/lib/actions/get-gamma-markets";
+import { getGammaMarkets } from "@/lib/actions/get-gamma-markets";
 
 export default async function MarketDetailPage({
   params,

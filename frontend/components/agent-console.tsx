@@ -6,7 +6,6 @@
 import React, { useEffect, useState } from "react";
 import AgentStep from "./agent-step";
 import DecisionCard from "./decision-card";
-import { AgentRunData } from "@/types";
 import exampleRunData from "../data/example-run.json"; // Import the JSON file
 
 interface AgentConsoleProps {

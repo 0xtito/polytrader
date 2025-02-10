@@ -4,15 +4,16 @@ import React, { useEffect, useState } from "react";
 import { format } from "date-fns";
 import {
   ArrowUpIcon,
-  ArrowDownIcon,
   ChartAreaIcon,
   BarChart3Icon,
   TimerIcon,
   DollarSignIcon,
 } from "lucide-react";
-import AgentConsole from "@/components/agent-console";
-import { cn } from "@/lib/utils";
-import StreamingAgentConsole from "./streaming-agent-console";
+import {
+  streamAgentAnalysis,
+  writeStreamToFile,
+} from "@/lib/actions/stream-agent-analysis";
+import StreamingAgentConsole, { AgentEvent } from "./streaming-agent-console";
 import { GammaMarket } from "@/lib/actions/get-gamma-markets";
 
 interface MarketDetailClientProps {
@@ -27,6 +28,10 @@ export default function MarketDetailClient({
   const [market, setMarket] = useState<GammaMarket | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [agentStarted, setAgentStarted] = useState<boolean>(false);
+  const [streamOutput, setStreamOutput] = useState<string[]>([]);
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [agentEvents, setAgentEvents] = useState<AgentEvent[]>([]);
 
   useEffect(() => {
     if (initialMarketData) {
@@ -34,6 +39,78 @@ export default function MarketDetailClient({
       setLoading(false);
     }
   }, [initialMarketData]);
+
+  const handleStartAnalysis = async () => {
+    setAgentStarted(true);
+    setIsStreaming(true);
+    const streamData: any[] = [];
+
+    try {
+      const stream = await streamAgentAnalysis(parseInt(marketId));
+      let rawStreamData = [];
+
+      // Keep track of successful reflections
+      const successfulReflections = new Set<string>();
+
+      for await (const chunk of stream) {
+        rawStreamData.push(chunk);
+
+        // Skip metadata events
+        if (chunk.event === "metadata") continue;
+
+        if (chunk.event === "updates" && chunk.data) {
+          // Process each key in the data object as a separate event
+          Object.entries(chunk.data).forEach(([eventName, eventData]) => {
+            // Check if this is a successful reflection event
+            if (
+              eventName.startsWith("reflect_on_") &&
+              (
+                eventData as { messages?: { status: string }[] }
+              )?.messages?.some((m) => m.status === "success")
+            ) {
+              successfulReflections.add(eventName.replace("reflect_on_", ""));
+            }
+
+            const eventInfo = {
+              name: eventName,
+              data: eventData as Record<string, any>,
+              timestamp: new Date().toISOString(),
+            };
+
+            streamData.push(eventInfo);
+
+            // Add reflection events always (they can happen multiple times)
+            // For non-reflection events, only add if there's no successful reflection yet
+            const baseEventName = eventName.replace("reflect_on_", "");
+            if (
+              eventName.startsWith("reflect_on_") ||
+              !successfulReflections.has(baseEventName)
+            ) {
+              setAgentEvents((prev) => [
+                ...prev,
+                {
+                  name: eventName,
+                  data: eventData as Record<string, any>,
+                },
+              ]);
+            }
+          });
+        }
+
+        setStreamOutput((prev) => [...prev]);
+      }
+
+      // Write stream data to file
+      await writeStreamToFile(rawStreamData);
+    } catch (err) {
+      console.error("Streaming error:", err);
+      setError(
+        err instanceof Error ? err.message : "An error occurred while streaming"
+      );
+    } finally {
+      setIsStreaming(false);
+    }
+  };
 
   if (loading || !market) {
     return (
@@ -47,8 +124,8 @@ export default function MarketDetailClient({
   }
 
   // No price change data in Gamma API
-  const priceChangeColor = "text-gray-500";
-  const priceChangeIcon = <ArrowUpIcon className="w-4 h-4" />;
+  // const priceChangeColor = "text-gray-500";
+  // const _priceChangeIcon = <ArrowUpIcon className="w-4 h-4" />;
 
   return (
     <div className="container mx-auto p-6 space-y-6">
@@ -145,7 +222,7 @@ export default function MarketDetailClient({
 
           <div className="flex justify-center">
             <button
-              onClick={() => setAgentStarted(true)}
+              onClick={handleStartAnalysis}
               className="bg-primary text-primary-foreground hover:bg-primary/90 px-8 py-3 rounded-lg font-medium transition-colors"
             >
               Run AI Analysis
@@ -205,7 +282,15 @@ export default function MarketDetailClient({
           </div>
 
           <div className="lg:row-span-2">
-            <StreamingAgentConsole marketId={parseInt(marketId)} />
+            {error ? (
+              <div className="text-red-500">{error}</div>
+            ) : (
+              <StreamingAgentConsole
+                streamOutput={streamOutput}
+                isStreaming={isStreaming}
+                agentEvents={agentEvents}
+              />
+            )}
           </div>
         </div>
       )}
