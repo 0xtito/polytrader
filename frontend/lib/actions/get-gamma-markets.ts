@@ -80,7 +80,7 @@ function safeJsonParse<T>(
 }
 
 export async function getGammaMarkets(
-  limit: number = 10,
+  limit: number = 25,
   offset: number = 0,
   options?: {
     marketId?: string;
@@ -93,6 +93,7 @@ export async function getGammaMarkets(
     volumeNumMin?: number;
     startDateMin?: string;
     endDateMin?: string;
+    featured?: boolean;
   }
 ): Promise<GammaMarketsResponse> {
   const params = new URLSearchParams({
@@ -122,6 +123,8 @@ export async function getGammaMarkets(
     if (options.startDateMin)
       params.append("start_date_min", options.startDateMin);
     if (options.endDateMin) params.append("end_date_min", options.endDateMin);
+    if (options.featured !== undefined)
+      params.append("featured", options.featured.toString());
   } else {
     // Default filters when no options provided
     params.append("active", "true");
@@ -138,6 +141,15 @@ export async function getGammaMarkets(
     }
 
     const rawData = await response.json();
+
+    // log all categories for each market if they exist
+    for (const market of rawData) {
+      if (market.category) {
+        console.log(`Market ${market.id} category:`, market.category);
+      } else {
+        console.log(`Market ${market.id} has no category`);
+      }
+    }
 
     // Parse the JSON strings in the response
     const data: GammaMarketsResponse = {
@@ -172,6 +184,9 @@ export async function getGammaMarkets(
           return baseMarket;
         }),
     };
+
+    // log 5 markets
+    // console.log(data.markets.slice(0, 5));
 
     return data;
   } catch (error) {

@@ -13,8 +13,9 @@ import {
   streamAgentAnalysis,
   writeStreamToFile,
 } from "@/lib/actions/stream-agent-analysis";
-import StreamingAgentConsole, { AgentEvent } from "./streaming-agent-console";
+import StreamingAgentConsole from "./streaming-agent-console";
 import { GammaMarket } from "@/lib/actions/get-gamma-markets";
+import { AgentEvent } from "@/types/agent-stream-types";
 
 interface MarketDetailClientProps {
   marketId: string;
