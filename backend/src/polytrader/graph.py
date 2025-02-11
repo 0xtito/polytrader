@@ -13,6 +13,7 @@
 
 import json
 from typing import Any, Dict, List, Literal, Optional, cast
+from datetime import datetime
 
 from langchain.schema import AIMessage, BaseMessage, SystemMessage, HumanMessage
 from langchain_core.messages import ToolMessage
@@ -155,27 +156,44 @@ async def research_agent_node(
     # Call the model
     response = cast(AIMessage, await model.ainvoke(messages))
 
-    # Initialize info to None
     info = None
+    final_tool_calls = []
+    search_results = []
 
-    print("RESPONSE:")
-    print(response)
-
-    # Check if the response has tool calls
     if response.tool_calls:
         for tool_call in response.tool_calls:
             if tool_call["name"] == "ExternalResearchInfo":
                 info = tool_call["args"]
-                break
+                final_tool_calls.append(tool_call)
+            elif tool_call["name"] == "search_exa":
+                # Store search results in summary format
+                search_results.append({
+                    "query": tool_call["args"].get("query", ""),
+                    "timestamp": datetime.now().isoformat(),
+                    "sources": [result.get("url", "") for result in tool_call.get("output", [])]
+                })
+    
+    # Create a new response with only the final ExternalResearchInfo tool call
     if info is not None:
-        response.tool_calls = [
-            tc for tc in response.tool_calls if tc["name"] == "ExternalResearchInfo"
-        ]
-    response_messages: List[BaseMessage] = [response]
-    if not response.tool_calls:  # If LLM didn't call any tool
-        response_messages.append(
-            HumanMessage(content="Please respond by calling one of the provided tools.")
+        filtered_response = AIMessage(
+            content=response.content,
+            tool_calls=final_tool_calls
         )
+        response_messages = [filtered_response]
+
+        # Update search_results_summary with combined results
+        if search_results:
+            state.search_results_summary = {
+                "queries": [sr["query"] for sr in search_results],
+                "timestamp": search_results[-1]["timestamp"],  # Use latest timestamp
+                "key_findings": [info["research_summary"]],  # Use the final research summary
+                "sources": list(set(sum([sr["sources"] for sr in search_results], [])))  # Unique sources
+            }
+    else:
+        # If no ExternalResearchInfo was called, prompt for it
+        response_messages = [
+            HumanMessage(content="Please respond by calling the ExternalResearchInfo tool with your findings.")
+        ]
 
     return {
         "messages": response_messages,
@@ -1016,4 +1034,5 @@ memory = MemorySaver()
 
 # Compile
 graph = workflow.compile(checkpointer=memory)
+# graph = workflow.compile()
 graph.name = "PolymarketAgent"

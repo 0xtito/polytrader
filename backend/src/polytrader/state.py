@@ -61,6 +61,19 @@ class State(InputState):
     market_trades: Optional[dict[str, Any]] = None
     historical_trends: Optional[dict[str, Any]] = None
 
+    # Field for storing summarized search results
+    search_results_summary: Optional[dict[str, Any]] = field(default=None)
+    """
+    A summary of search results, containing only key findings rather than raw content.
+    Structure:
+    {
+        "query": str,  # The search query that was used
+        "timestamp": str,  # When the search was performed
+        "key_findings": List[str],  # List of main points from the search
+        "sources": List[str]  # List of source URLs
+    }
+    """
+
 
 @dataclass(kw_only=True)
 class OutputState:
