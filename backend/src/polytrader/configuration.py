@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import os
+from dotenv import load_dotenv
 from dataclasses import dataclass, field, fields
 from typing import Optional
 from typing_extensions import Annotated
@@ -11,6 +13,8 @@ from typing_extensions import Annotated
 from langchain_core.runnables import RunnableConfig, ensure_config
 
 from polytrader import prompts
+
+load_dotenv()
 
 """
 This configuration pattern is inspired by typical dataclass-based agent settings.
@@ -75,6 +79,20 @@ class Configuration:
         default=3,
         metadata={
             "description": "Maximum number of times an info retrieval tool can be called."
+        },
+    )
+
+    firecrawl_api_key: str = field(
+        default=os.getenv("FIRECRAWL_API_KEY"),
+        metadata={
+            "description": "The API key for the Firecrawl search engine."
+        },
+    )
+
+    firecrawl_api_url: str = field(
+        default="https://api.firecrawl.com",
+        metadata={
+            "description": "The API URL for the Firecrawl search engine."
         },
     )
 

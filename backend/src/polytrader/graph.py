@@ -27,7 +27,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from polytrader.configuration import Configuration
 from polytrader.gamma import GammaMarketClient
 from polytrader.polymarket import Polymarket
-from polytrader.state import InputState, OutputState, State
+from polytrader.state import InputState, OutputState, ResearchResult, State
 from polytrader.tools import (
     analysis_get_external_news,
     analysis_get_market_trades,
@@ -37,6 +37,8 @@ from polytrader.tools import (
     analysis_get_market_details,
     analysis_get_multi_level_orderbook,
     analysis_get_historical_trends,
+    call_agent_with_tools,
+    deep_research  # <- IMPORT OUR NEW TOOL
 )
 from polytrader.utils import init_model
 
@@ -108,38 +110,72 @@ async def research_agent_node(
     # Load configuration
     configuration = Configuration.from_runnable_config(config)
 
-    # Define the 'Info' tool, which is the user-defined extraction schema
-    external_research_info_tool = {
-        "name": "ExternalResearchInfo",
-        "description": "Call this when you have gathered sufficient research from the web on the market's subject. This will be used to update the info you have about the topic.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "research_summary": {
-                    "type": "string",
-                    "description": "A comprehensive summary of the research findings"
-                },
-                "confidence": {
-                    "type": "number",
-                    "description": "Confidence level in the research findings (0-1)"
-                },
-                "sources": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "List of sources used in research"
-                }
-            },
-            "required": ["research_summary", "confidence", "sources"]
-        }
-    }
+    last_message = state.messages[-1]
+
+    research_report = None
+
+    if isinstance(last_message, ToolMessage):
+        print("IS TOOL MESSAGE")
+        print(last_message)
+        try:
+            # Parse the content into a ResearchResult if it's a dictionary
+            content = last_message.content
+            if isinstance(content, dict):
+                print("IS DICT")
+                research_report = ResearchResult(**content)
+            elif isinstance(content, ResearchResult):
+                print("IS RESEARCH RESULT")
+                research_report = content
+            else:
+                print("IS NOT DICT OR RESEARCH RESULT")
+                # Try to parse string content as JSON
+                try:
+                    content_dict = json.loads(content)
+                    # Doing this to ensure the content is a ResearchResult
+                    research_report = ResearchResult(**content_dict)
+                except json.JSONDecodeError:
+                    print("Could not parse research report content as JSON")
+                    return {
+                        "messages": [last_message],
+                        "research_report": None,
+                        "loop_step": state.loop_step + 1,
+                    }
+
+            # Update state with the ResearchResult
+            state.research_report = research_report.model_dump()
+
+            last_ai_message = state.messages[-2]
+
+            # Create an AIMessage with the research result as a tool call
+            ai_message = AIMessage(
+                content="Research completed successfully. Please evaluate the results.",
+                tool_calls=[{
+                    "id": last_ai_message.tool_calls[0]["id"],
+                    "name": last_ai_message.tool_calls[0]["name"],
+                    "args": last_ai_message.tool_calls[0]["args"]
+                }]
+            )
+
+
+            return {
+                "messages": [ai_message],
+                "research_report": state.research_report,
+                "loop_step": state.loop_step + 1,
+            }
+        except Exception as e:
+            print(f"Error parsing research report: {e}")
+            return {
+                "messages": [last_message],
+                "research_report": None,
+                "loop_step": state.loop_step + 1,
+            }
 
     # Format the prompt
     p = configuration.research_agent_prompt.format(
-        info=json.dumps(state.extraction_schema, indent=2), 
         market_data=json.dumps(state.market_data or {}, indent=2), 
-        question=state.market_data["question"], 
-        description=state.market_data["description"], 
-        outcomes=state.market_data["outcomes"]
+        question=state.market_data.get("question", ""), 
+        description=state.market_data.get("description", ""), 
+        outcomes=state.market_data.get("outcomes", [])
     )
 
     # Combine with conversation so far
@@ -147,57 +183,15 @@ async def research_agent_node(
 
     # Create the model and bind tools
     raw_model = init_model(config)
-    model = raw_model.bind_tools([
-        search_exa,
-        # search_tavily,
-        external_research_info_tool
-    ], tool_choice="any")
+    model = raw_model.bind_tools([deep_research], tool_choice="any")
 
     # Call the model
     response = cast(AIMessage, await model.ainvoke(messages))
 
-    info = None
-    final_tool_calls = []
-    search_results = []
-
-    if response.tool_calls:
-        for tool_call in response.tool_calls:
-            if tool_call["name"] == "ExternalResearchInfo":
-                info = tool_call["args"]
-                final_tool_calls.append(tool_call)
-            elif tool_call["name"] == "search_exa":
-                # Store search results in summary format
-                search_results.append({
-                    "query": tool_call["args"].get("query", ""),
-                    "timestamp": datetime.now().isoformat(),
-                    "sources": [result.get("url", "") for result in tool_call.get("output", [])]
-                })
-    
-    # Create a new response with only the final ExternalResearchInfo tool call
-    if info is not None:
-        filtered_response = AIMessage(
-            content=response.content,
-            tool_calls=final_tool_calls
-        )
-        response_messages = [filtered_response]
-
-        # Update search_results_summary with combined results
-        if search_results:
-            state.search_results_summary = {
-                "queries": [sr["query"] for sr in search_results],
-                "timestamp": search_results[-1]["timestamp"],  # Use latest timestamp
-                "key_findings": [info["research_summary"]],  # Use the final research summary
-                "sources": list(set(sum([sr["sources"] for sr in search_results], [])))  # Unique sources
-            }
-    else:
-        # If no ExternalResearchInfo was called, prompt for it
-        response_messages = [
-            HumanMessage(content="Please respond by calling the ExternalResearchInfo tool with your findings.")
-        ]
-
+    # Return response with updated state
     return {
-        "messages": response_messages,
-        "external_research_info": info,
+        "messages": [response],
+        "research_report": state.research_report,
         "loop_step": state.loop_step + 1,
     }
 
@@ -243,17 +237,29 @@ Your role is to determine if the research is sufficient to proceed with market a
     # Create messages list
     messages = [system_msg] + state.messages[:-1]
     
-    # Get the presumed info
-    presumed_info = state.external_research_info
+    # Get the research result
+    research_result = state.research_report
     checker_prompt = """I am evaluating the research information below. 
 Is this sufficient to proceed with market analysis? Give your reasoning.
 Consider factors like comprehensiveness, relevance, and reliability of sources.
 If you don't think it's sufficient, be specific about what needs to be improved.
 
 Research Information:
-{presumed_info}"""
+Report: {report}
+
+Key Learnings:
+{learnings}
+
+Sources:
+{sources}"""
     
-    p1 = checker_prompt.format(presumed_info=json.dumps(presumed_info or {}, indent=2))
+    p1 = checker_prompt.format(
+        report=research_result.get("report", "") if research_result else "",
+        learnings="\n".join([f"- {learning}" for learning in research_result.get("learnings", [])]) if research_result else "",
+        sources="\n".join([f"- {url}" for url in research_result.get("visited_urls", [])]) if research_result else ""
+    )
+
+    print("P1: ", p1)
     messages.append(HumanMessage(content=p1))
 
     # Initialize and configure the model
@@ -261,14 +267,16 @@ Research Information:
     bound_model = raw_model.with_structured_output(InfoIsSatisfactory)
     response = cast(InfoIsSatisfactory, await bound_model.ainvoke(messages))
 
-    if response.is_satisfactory and presumed_info:
+    print("RESPONSE: ", response)
+
+    if response.is_satisfactory and research_result:
         return {
-            "external_research_info": presumed_info,
+            "research_report": research_result,
             "messages": [
                 ToolMessage(
                     tool_call_id=last_message.tool_calls[0]["id"],
                     content="\n".join(response.reason),
-                    name="ExternalResearchInfo",
+                    name="deep_research",
                     additional_kwargs={"artifact": response.model_dump()},
                     status="success",
                 )
@@ -281,7 +289,7 @@ Research Information:
                 ToolMessage(
                     tool_call_id=last_message.tool_calls[0]["id"],
                     content=f"Research needs improvement:\n{response.improvement_instructions}",
-                    name="ExternalResearchInfo",
+                    name="deep_research",
                     additional_kwargs={"artifact": response.model_dump()},
                     status="error",
                 )
@@ -306,7 +314,7 @@ async def analysis_agent_node(
     # Define the 'AnalysisInfo' tool with enhanced schema
     analysis_info_tool = {
         "name": "AnalysisInfo",
-        "description": "Call this when you have completed your analysis. Provide a comprehensive analysis of all market data gathered from the tools.",
+        "description": "Call this when you have completed your quantitative analysis. Provide a comprehensive quantitative analysis of all market data gathered from the tools.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -402,6 +410,67 @@ async def analysis_agent_node(
         }
     }
 
+    # Build the system text with comprehensive instructions
+    system_text = """You are a market analysis expert focused on analyzing Polymarket prediction markets.
+Your task is to perform a comprehensive market analysis using all available data sources and tools.
+
+Available Analysis Tools:
+1. Market Details (analysis_get_market_details):
+   - Current prices, volumes, spreads
+   - Basic market metrics and parameters
+   - Outcome prices and options
+
+2. Multi-Level Orderbook (analysis_get_multi_level_orderbook):
+   - Detailed bid/ask levels
+   - Order book depth and liquidity
+   - Price impact analysis
+   - Best execution levels
+
+3. Historical Trends (analysis_get_historical_trends):
+   - Price history and trends
+   - Volume patterns
+   - News sentiment analysis
+   - Market context and background
+
+4. Market Trades (analysis_get_market_trades):
+   - Recent trading activity
+   - Trade size distribution
+   - Price impact of trades
+   - Trading patterns
+
+5. External News (analysis_get_external_news):
+   - Relevant news articles
+   - Market sentiment indicators
+   - External factors affecting the market
+
+Analysis Process:
+1. First gather all necessary market data using the available tools
+2. Analyze each aspect of the market:
+   - Price levels and trends
+   - Liquidity and depth
+   - Trading activity and patterns
+   - Market sentiment and news impact
+3. Look for correlations between different data points
+4. Identify potential trading opportunities or risks
+5. Provide a comprehensive analysis using the AnalysisInfo tool
+
+Key Analysis Requirements:
+1. Always check both sides of the orderbook for liquidity
+2. Consider the impact of recent trades on market prices
+3. Factor in external news and sentiment
+4. Assess market efficiency and potential mispricing
+5. Evaluate execution costs and optimal trade sizes
+6. Consider the relationship between different outcomes
+
+When you have completed your analysis:
+1. Use the AnalysisInfo tool to provide a structured analysis
+2. Include specific metrics and observations
+3. Provide clear reasoning for your conclusions
+4. Assign a confidence level to your analysis
+5. Make specific recommendations for trade execution
+
+Remember: Your analysis will be used to make trading decisions, so be thorough and precise."""
+
     # Format the prompt with required data checks
     required_data_checks = {
         "market_details": state.market_details is not None,
@@ -418,7 +487,6 @@ async def analysis_agent_node(
         outcomes=state.market_data["outcomes"] if state.market_data else ""
     )
 
-    # Add data availability check to prompt
     data_check_prompt = "\nData Availability Status:\n"
     for data_type, is_available in required_data_checks.items():
         if not is_available:
@@ -428,8 +496,7 @@ async def analysis_agent_node(
     
     p += data_check_prompt
 
-    # Combine with conversation so far
-    messages = [HumanMessage(content=p)] + state.messages
+    messages = [SystemMessage(content=system_text)] + [HumanMessage(content=p)] + state.messages
 
     # Create the model and bind tools
     raw_model = init_model(config)
@@ -496,7 +563,7 @@ async def reflect_on_analysis_node(
     This node checks if the market analysis is satisfactory.
     It uses a structured output model to evaluate the quality of analysis.
     """
-    last_message = state.messages[-1]
+    last_message = state.messages[-1] if state.messages else None
     if not isinstance(last_message, AIMessage):
         raise ValueError(
             f"{reflect_on_analysis_node.__name__} expects the last message in the state to be an AI message."
@@ -516,7 +583,7 @@ Available Data Sources:
 Focus on evaluating whether we have:
 1. Clear understanding of current market prices and spreads
 2. Sufficient liquidity assessment for intended trading
-3. Basic market sentiment from recent trading activity
+3. Basic market sentiment from recent activity
 4. Reasonable risk assessment based on available metrics
 
 Do NOT require:
@@ -612,14 +679,10 @@ async def trade_agent_node(
     # Evaluate whether user has positions
     ###########################################################################
     position_info = state.positions or {}
-    # Check if user has any position for the relevant market or token
-    # The LLM does not necessarily know the token ID yet, so we keep it flexible
-    # We'll just instruct the LLM about what is possible in general:
     user_has_positions = any(position_info.values())  # True if any positive size
 
     # The user can do NO_TRADE or BUY in all scenarios
     # The user can SELL only if they have an existing position
-    # We'll pass a short explanation in the system prompt
     possible_sides = ["BUY", "NO_TRADE"]
     if user_has_positions:
         possible_sides = ["BUY", "SELL", "NO_TRADE"]
@@ -686,11 +749,11 @@ async def trade_agent_node(
 
     # Build a comprehensive prompt that includes all available information
     system_text = f"""You are a trade decision maker. Your task is to make a SINGLE, CLEAR trade decision based on all available information.
-You must use the TradeDecision tool ONCE to record your decision. Do not make multiple trade calls.
+You must use the trade tool ONCE to record your decision. Do not make multiple trade calls.
 
 Available Information:
 1. Market Data: {json.dumps(state.market_data or {}, indent=2)}
-2. Research Info: {json.dumps(state.external_research_info or {}, indent=2)}
+2. Research Report: {json.dumps(state.research_report or {}, indent=2)}
 3. Analysis Info: {json.dumps(state.analysis_info or {}, indent=2)}
 4. User Positions (for this or related markets): {json.dumps(state.positions or {}, indent=2)}
 5. User's Available Funds for a new position: {state.available_funds}
@@ -836,7 +899,6 @@ Should this trade decision be accepted as final?"""
                 is_valid = False
                 validation_errors.append(f"Cannot BUY with size {size_val} exceeding available funds {state.available_funds}.")
         if side_val == "SELL":
-            # check position if the user has the token
             token_val = trade_info.get("token_id", "")
             if not state.positions or state.positions.get(token_val, 0) <= 0:
                 is_valid = False
@@ -895,19 +957,27 @@ def route_after_research_agent(state: State) -> Literal["research_agent", "resea
     """After research agent, check if we need to execute tools or reflect."""
     print("INSIDE ROUTE AFTER RESEARCH AGENT")
     last_msg = state.messages[-1]
-    
+    print("state.research_report: ", state.research_report)
+
+    # First check if we already have research results
+    if state.research_report:
+        return "reflect_on_research"
+        
     if not isinstance(last_msg, AIMessage):
         return "research_agent"
     
-    if last_msg.tool_calls and last_msg.tool_calls[0]["name"] == "ExternalResearchInfo":
+    if last_msg.tool_calls and last_msg.tool_calls[0]["name"] == "deep_research":
+        return "research_tools"
+    elif last_msg.tool_calls and last_msg.tool_calls[0]["name"] == "ExternalResearchInfo":
         return "reflect_on_research"
     else:
-        return "research_tools"
+        return "research_agent"
 
 def route_after_reflect_on_research(state: State, *, config: Optional[RunnableConfig] = None) -> Literal["research_agent", "analysis_agent", "__end__"]:
     configuration = Configuration.from_runnable_config(config)
 
     last_msg = state.messages[-1] if state.messages else None
+    print("LAST MSG: ", last_msg)
     if not isinstance(last_msg, ToolMessage):
         return "research_agent"
     
@@ -996,8 +1066,9 @@ workflow.add_conditional_edges("fetch_market_data", route_after_fetch)
 
 # Research 
 workflow.add_node("research_tools", ToolNode([
-    search_exa,
+    # search_exa,
     # search_tavily
+    deep_research
 ]))
 workflow.add_node("research_agent", research_agent_node)
 workflow.add_node("reflect_on_research", reflect_on_research_node)
@@ -1030,9 +1101,9 @@ workflow.add_conditional_edges("trade_agent", route_after_trade)
 workflow.add_conditional_edges("reflect_on_trade", route_after_reflect_on_trade)
 
 # Set up memory
-memory = MemorySaver()
+# memory = MemorySaver()
 
 # Compile
-graph = workflow.compile(checkpointer=memory)
-# graph = workflow.compile()
+# graph = workflow.compile(checkpointer=memory)
+graph = workflow.compile()
 graph.name = "PolymarketAgent"

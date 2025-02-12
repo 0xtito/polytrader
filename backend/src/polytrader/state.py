@@ -10,6 +10,23 @@ from typing import Annotated, Any, List, Optional, Dict, Union
 from langchain.schema import BaseMessage
 from langgraph.graph import add_messages
 
+from pydantic import BaseModel, Field
+
+
+class ResearchResult(BaseModel):
+    """A structured result of research."""
+    report: str = Field(description="A detailed report of the research findings.")
+    learnings: List[str] = Field(description="A list of key learnings from the research.")
+    visited_urls: List[str] = Field(description="A list of URLs visited during the research.")
+
+    # def model_dump(self) -> Dict[str, Any]:
+    #     """Convert to a dictionary format."""
+    #     return {
+    #         "report": self.report,
+    #         "learnings": self.learnings,
+    #         "visited_urls": self.visited_urls
+    #     }
+
 
 @dataclass(kw_only=True)
 class InputState:
@@ -20,9 +37,14 @@ class InputState:
     extraction_schema: dict[str, Any] = field(
         default_factory=lambda: {"headline": "", "summary": "", "source_links": []}
     )
-    external_research_info: Optional[dict[str, Any]] = field(default=None)
     """
     Tracks the current state of the external research fetched by the agent.
+    Structure matches ResearchResult:
+    {
+        "report": str,  # Detailed research report
+        "learnings": List[str],  # Key learnings from research
+        "visited_urls": List[str]  # Sources visited during research
+    }
     """
 
     # New fields for positions and funds
@@ -47,7 +69,7 @@ class State(InputState):
     messages: Annotated[List[BaseMessage], add_messages] = field(default_factory=list)
     loop_step: int = 0
     market_data: Optional[dict[str, Any]] = None
-    external_research: Optional[dict[str, Any]] = None
+    research_report: Optional[dict[str, Any]] = None
     trade_decision: Optional[str] = None
 
     # Additional fields for storing agent outputs
@@ -79,7 +101,8 @@ class State(InputState):
 class OutputState:
     """This is the final output after the graph completes."""
 
-    external_research_info: dict[str, Any]
+    # research_report: ResearchResult
+    research_report: dict[str, Any]
     analysis_info: dict[str, Any]
     trade_info: dict[str, Any]
     confidence: float

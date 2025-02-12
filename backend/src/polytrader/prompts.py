@@ -4,27 +4,19 @@
 # </ai_context>
 
 RESEARCH_AGENT_PROMPT = """
-You are the Polymarket Research Agent. Your goal is to gather external information or context needed to analyze the market's question thoroughly.
+You are an research researcher. Your goal is to gather comprehensive information about a question or topic.
+
 
 Available Tools:
-- search_tavily: Search for relevant articles and information using Tavily
-- search_exa: Search for relevant articles and information using Exa
+- deep_research: Search for relevant articles and information using a recursive approach. Input an initial query to start the research.
 
-Important:
-- You have the following schema for your final extracted research info:
-{info}
 
 Market data:
 {market_data}
 
-Market Question:
-{question}
-
-Description:
-{description}
-
-Possible Outcomes:
-{outcomes}
+Market Question: {question}
+Description: {description}
+Possible Outcomes: {outcomes}
 """
 
 ANALYSIS_AGENT_PROMPT = """

@@ -10,7 +10,6 @@ This module contains functions that are directly exposed to the LLM as tools.
 These tools can be used for tasks such as web searching, market research and making trade decisions.
 """
 
-import ast
 import json
 import logging
 from typing import Any, Optional, cast, Dict, List
@@ -18,18 +17,19 @@ from langchain_community.tools.tavily_search import TavilySearchResults
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import InjectedToolArg
 from langgraph.prebuilt import InjectedState
+from pydantic import BaseModel, Field
 from typing_extensions import Annotated
 from langchain_exa import ExaSearchResults
 from langchain.schema import SystemMessage, AIMessage
 from langchain_core.messages import ToolMessage
 from datetime import datetime
-
+from firecrawl import FirecrawlApp
 
 from polytrader.configuration import Configuration
-from polytrader.state import State
+from polytrader.state import ResearchResult, State
 from polytrader.gamma import GammaMarketClient
 from polytrader.polymarket import Polymarket
-from polytrader.utils import init_model
+from polytrader.utils import generate_serp_queries, init_model, process_serp_result, write_final_report
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -98,7 +98,7 @@ async def search_exa(
         formatted_result = {
             "title": getattr(result, "title", ""),
             "url": getattr(result, "url", ""),
-            "content": getattr(result, "text", ""),
+            "content": getattr(result, "content", ""),
             "score": getattr(result, "score", 0),
             "published_date": getattr(result, "published_date", None)
         }
@@ -597,3 +597,191 @@ async def call_agent_with_tools(
         "proceed": True,
         "loop_step": state.loop_step + 1,
     }
+
+################################################################################
+# NEW: Deep Research Tool
+################################################################################
+
+async def deep_research(
+    query: str,
+    max_depth: int = 2,
+    max_links: int = 3,
+    *,
+    config: Annotated[RunnableConfig, InjectedToolArg],
+    state: Annotated[State, InjectedState]
+) -> Dict[str, Any]:
+    """
+    Perform iterative deep web research using Firecrawl to gather extensive info on the provided query.
+    The LLM can refine or expand sub-queries. This tool returns a structured summary of findings.
+    """
+    print(f"Starting deep_research for query='{query}' with max_depth={max_depth}, max_links={max_links}")
+
+    # Load configuration
+    configuration = Configuration.from_runnable_config(config)
+
+    async def _deep_research_recursive(
+        current_query: str,
+        breadth: int,
+        depth: int,
+        learnings: List[str] = [],
+        visited_urls: List[str] = [],
+        progress: Dict[str, Any] = {}
+    ) -> Dict[str, Any]:
+        if len(progress) == 0:
+            progress = {
+                "currentDepth": depth,
+                "totalDepth": depth,
+                "currentBreadth": breadth,
+                "totalBreadth": breadth,
+                "totalQueries": 0,
+                "completedQueries": 0
+            }
+            
+        # Generate SERP queries
+        serp_queries = await generate_serp_queries(
+            current_query,
+            num_queries=breadth,
+            learnings=learnings,
+            config=config
+        )
+
+        print("--- SERP QUERIES ---")
+        print(serp_queries)
+        print("--- END SERP QUERIES ---")
+        
+        progress["totalQueries"] = len(serp_queries.queries)
+        progress["currentQuery"] = serp_queries.queries[0].query if serp_queries.queries else None
+
+        all_results = []
+        new_breadth = breadth
+        for serp_query in serp_queries.queries:
+            try:
+                # Search using Exa
+                search_result = await search_exa(serp_query.query, config=config)
+                
+                # Format Exa results to match expected structure
+                formatted_result = {
+                    "success": True,
+                    "data": []
+                }
+                
+                # Extract relevant data from Exa results
+                if search_result:
+                    for item in search_result:
+                        formatted_result["data"].append({
+                            "url": item.get("url", ""),
+                            "title": item.get("title", ""),
+                            "description": item.get("content", "")
+                        })
+            
+                # Process results
+                processed_results = await process_serp_result(
+                    serp_query.query,
+                    formatted_result,
+                    num_follow_up_questions=new_breadth,
+                    config=config
+                )
+
+                print("--- Processed Results: ---")
+                print(processed_results)
+                print("--- END Processed Results ---")
+                
+                # Collect URLs from the processed result
+                new_urls = [item.get("url", "") for item in formatted_result["data"] if item.get("url")]
+                new_breadth = max(1, breadth // 2)
+                new_depth = depth - 1
+                
+                all_learnings = learnings + processed_results.learnings
+                all_urls = visited_urls + new_urls
+                
+                if new_depth > 0:
+                    print(f"Researching deeper, breadth: {new_breadth}, depth: {new_depth}")
+                    
+                    progress.update({
+                        "currentDepth": new_depth,
+                        "currentBreadth": new_breadth,
+                        "completedQueries": progress["completedQueries"] + 1,
+                        "currentQuery": serp_query.query
+                    })
+                    
+                    next_query = f"""
+                    Previous research goal: {serp_query.research_goal}
+                    Follow-up research directions: {chr(10).join(processed_results.follow_up_questions)}
+                    """.strip()
+                    
+                    result = await _deep_research_recursive(
+                        next_query,
+                        new_breadth,
+                        new_depth,
+                        all_learnings,
+                        all_urls,
+                        progress
+                    )
+                    all_results.append(result)
+                else:
+                    progress.update({
+                        "currentDepth": 0,
+                        "completedQueries": progress["completedQueries"] + 1,
+                        "currentQuery": serp_query.query
+                    })
+                    all_results.append({
+                        "learnings": all_learnings,
+                        "visitedUrls": all_urls
+                    })
+                    
+            except Exception as e:
+                print(f"Error processing query {serp_query.query}: {str(e)}")
+                print(f"Full error: {e.__class__.__name__}: {str(e)}")
+                all_results.append({
+                    "learnings": [],
+                    "visitedUrls": []
+                })
+                
+        # Combine all results
+        combined_learnings = list(set([
+            learning 
+            for result in all_results 
+            for learning in result.get("learnings", [])
+        ]))
+        combined_urls = list(set([
+            url 
+            for result in all_results 
+            for url in result.get("visitedUrls", [])
+        ]))
+        
+        return {
+            "learnings": combined_learnings,
+            "visitedUrls": combined_urls
+        }
+    
+    # Start recursive research
+    research_results = await _deep_research_recursive(
+        query,
+        max_links,
+        max_depth
+    )
+
+    # print("--- RESEARCH RESULTS ---")
+    # print(research_results)
+    # print("--- END RESEARCH RESULTS ---")
+    
+    # Generate final report
+    final_report = await write_final_report(
+        query,
+        research_results["learnings"],
+        research_results["visitedUrls"],
+        config=config
+    )
+
+    print("--- FINAL REPORT ---")
+    print(final_report)
+    print("--- END FINAL REPORT ---")
+
+    # Store in state using the ResearchResult model
+    research_result = ResearchResult(
+        report=final_report,
+        learnings=research_results["learnings"],
+        visited_urls=research_results["visitedUrls"]
+    )
+    
+    return research_result.model_dump_json()
