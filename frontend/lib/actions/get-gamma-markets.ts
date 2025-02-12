@@ -94,6 +94,8 @@ export async function getGammaMarkets(
     startDateMin?: string;
     endDateMin?: string;
     featured?: boolean;
+    tagId?: string;
+    relatedTags?: boolean;
   }
 ): Promise<GammaMarketsResponse> {
   const params = new URLSearchParams({
@@ -125,6 +127,9 @@ export async function getGammaMarkets(
     if (options.endDateMin) params.append("end_date_min", options.endDateMin);
     if (options.featured !== undefined)
       params.append("featured", options.featured.toString());
+    if (options.tagId) params.append("tag_id", options.tagId);
+    if (options.relatedTags)
+      params.append("related_tags", options.relatedTags.toString());
   } else {
     // Default filters when no options provided
     params.append("active", "true");
@@ -137,7 +142,8 @@ export async function getGammaMarkets(
     const response = await fetch(url);
 
     if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
+      console.error("HTTP error! status:", response.status);
+      throw new Error(`HTTP error! status Text: ${response.statusText}`);
     }
 
     const rawData = await response.json();
