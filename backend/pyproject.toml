@@ -21,6 +21,7 @@ dependencies = [
     "py-order-utils>=0.3.2",
     "py-clob-client>=0.20.0",
     "web3>=7.5.0",
+    "firecrawl-py>=1.11.1"
 ]
 
 [project.optional-dependencies]
