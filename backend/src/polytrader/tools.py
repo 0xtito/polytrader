@@ -779,7 +779,7 @@ async def deep_research(
 
     # Store in state using the ResearchResult model
     research_result = ResearchResult(
-        report=final_report,
+        report=final_report.report,
         learnings=research_results["learnings"],
         visited_urls=research_results["visitedUrls"]
     )

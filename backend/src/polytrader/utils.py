@@ -1,11 +1,12 @@
 """Utility functions for the Polytrader."""
 import ast
+from datetime import datetime
 import json
 from typing import Any, Callable, Dict, List, Optional, cast
 
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AnyMessage
+from langchain_core.messages import AnyMessage, AIMessage
 from langchain_core.runnables import RunnableConfig
 from pydantic import BaseModel, Field
 
@@ -93,20 +94,27 @@ def init_model(config: Optional[RunnableConfig] = None) -> BaseChatModel:
         model = fully_specified_name
     return init_chat_model(model, model_provider=provider)
 
+class FinalReport(BaseModel):
+    """A final report on the research."""
+    report: str = Field(description="The final report on the research.")
+    learnings: List[str] = Field(description="A list of key learnings from the research.")
+    visited_urls: List[str] = Field(description="A list of URLs visited during the research.")
+
+
 async def write_final_report(
     prompt: str,
     learnings: List[str],
     visited_urls: List[str],
     *,
     config: RunnableConfig
-) -> str:
+) -> FinalReport:
     """Generate a final report based on all research learnings."""
     
     learnings_str = "\n".join([f"<learning>{learning}</learning>" for learning in learnings])
     if len(learnings_str) > 150000:
         learnings_str = learnings_str[:150000]
     
-    model = init_model(config)
+    raw_model = init_model(config)
     prompt = f"""Given the following prompt from the user, write a final report on the topic using the learnings from research. 
 Make it as detailed as possible, aim for 3 or more pages, include ALL the learnings from research:
 
@@ -117,12 +125,13 @@ Here are all the learnings from previous research:
 <learnings>
 {learnings_str}
 </learnings>"""
-
-    response = await model.ainvoke(prompt)
     
-    # Append sources
-    urls_section = "\n\n## Sources\n\n" + "\n".join([f"- {url}" for url in visited_urls])
-    return response.content + urls_section
+    model = raw_model.with_structured_output(FinalReport)
+
+    response = cast(AIMessage, await model.ainvoke(prompt))
+    
+
+    return response
 
 class SerpQuery(BaseModel):
     """A single SERP query with its research goal."""
@@ -144,7 +153,10 @@ async def generate_serp_queries(
     print(f"Generating SERP queries for: {query}")
     
     model = init_model(config).with_structured_output(GenerateSerpQueries)
-    prompt = f"""Given the following prompt from the user, generate a list of SERP queries to research the topic.
+
+    date = datetime.now().strftime("%Y-%m-%d")
+
+    prompt = f"""The current date is {date}. Given the following prompt from the user, generate a list of SERP queries to research the topic.
 Return a maximum of {num_queries} queries. Each query should have:
 1. A search query string
 2. A detailed explanation of what we hope to learn from this query
@@ -157,10 +169,6 @@ Make sure each query is unique and targets a different aspect of the research:
 """
 
     response = cast(GenerateSerpQueries, await model.ainvoke(prompt))
-    
-    print("--- GENERATE SERP RESPONSE ---")
-    print(response)
-    print("--- END GENERATE SERP RESPONSE ---")
     
     return response
 
