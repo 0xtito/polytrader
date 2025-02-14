@@ -10,7 +10,6 @@ import { erc20Abi, formatUnits, parseUnits } from "viem";
 import { useState, useEffect } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 
-const USDC_ADDRESS = process.env.NEXT_PUBLIC_USDC_ADDRESS as `0x${string}`;
 const USDCE_ADDRESS = process.env.NEXT_PUBLIC_USDCE_ADDRESS as `0x${string}`;
 const AGENT_ADDRESS = process.env
   .NEXT_PUBLIC_POLYMARKET_PROXY_ADDRESS as `0x${string}`;
