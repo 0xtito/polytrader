@@ -251,7 +251,7 @@ async def reflect_on_research_node(
 
     # Build the system message
     market_data_str = json.dumps(state.market_data or {}, indent=2)
-    system_text = """You are evaluating the quality of web research gathered about a market.
+    system_text = f"""You are evaluating the quality of web research gathered about a market.
 Your role is to determine if the research is sufficient to proceed with market analysis.
 
 The research report is meant to help answer the question: <question>{state.market_data.get("question", "")}</question>.
@@ -265,8 +265,10 @@ The research report is meant to help answer the question: <question>{state.marke
     research_result = state.research_report
     checker_prompt = """I am evaluating the research information below. 
 Is this sufficient to proceed with market analysis? Give your reasoning.
-Consider factors like comprehensiveness, relevance, and reliability of sources.
+Consider factors like comprehensiveness, relevance, and reliability of sources. 
 If you don't think it's sufficient, be specific about what needs to be improved.
+
+When evaluating this research report, focus on how well it answers the core question: <question>{question}</question>. The priority is gathering relevant factual information and qualitative insights - do not worry about numerical analysis or quantitative metrics at this stage.
 
 Research Information:
 Report: {report}
@@ -278,6 +280,7 @@ Sources:
 {sources}"""
     
     p1 = checker_prompt.format(
+        question=state.market_data.get("question", "") if research_result else "",
         report=research_result.get("report", "") if research_result else "",
         learnings="\n".join([f"- {learning}" for learning in research_result.get("learnings", [])]) if research_result else "",
         sources="\n".join([f"- {url}" for url in research_result.get("visited_urls", [])]) if research_result else ""
@@ -314,7 +317,10 @@ Sources:
                     tool_call_id=last_message.tool_calls[0]["id"],
                     content=f"Research needs improvement:\n{response.improvement_instructions}",
                     name="deep_research",
-                    additional_kwargs={"artifact": response.model_dump()},
+                    additional_kwargs={
+                        "artifact": response.model_dump(),
+                        "improvement_instructions": response.improvement_instructions
+                    },
                     status="error",
                 )
             ],
@@ -1172,15 +1178,21 @@ def route_after_fetch(state: State) -> Literal["research_agent", "__end__"]:
     state.loop_step = 0
     return "research_agent"
 
-def route_after_research_agent(state: State) -> Literal["research_agent", "research_tools", "reflect_on_research"]:
+def route_after_research_agent(state: State, config: Optional[RunnableConfig] = None) -> Literal["research_agent", "research_tools", "reflect_on_research", "__end__"]:
     """After research agent, check if we need to execute tools or reflect."""
     print("INSIDE ROUTE AFTER RESEARCH AGENT")
     last_msg = state.messages[-1]
     print("state.research_report: ", state.research_report)
 
+    if state.loop_step > 3:
+        return "__end__"
+
     # First check if we already have research results
-    if state.research_report:
+    if state.research_report and not last_msg.additional_kwargs.get("improvement_instructions"):
         return "reflect_on_research"
+    
+    if state.research_report and last_msg.additional_kwargs.get("improvement_instructions") and last_msg.tool_calls[0]["name"] == "deep_research":
+        return "research_tools"
         
     if not isinstance(last_msg, AIMessage):
         return "research_agent"
