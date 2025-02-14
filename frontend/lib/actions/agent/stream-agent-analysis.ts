@@ -1,6 +1,6 @@
 "use server";
 
-import { Client } from "@langchain/langgraph-sdk";
+import { Client, type Config } from "@langchain/langgraph-sdk";
 
 const DEPLOYMENT_URL = process.env.LANGGRAPH_DEPLOYMENT_URL;
 const ASSISTANT_ID = "polytrader";
@@ -16,19 +16,23 @@ export async function streamAgentAnalysis(marketId: number) {
 
     const input = {
       market_id: marketId.toString(),
-      custom_instructions: null,
-      extraction_schema: {
-        headline: "",
-        summary: "",
-        source_links: [],
+      from_js: true,
+    };
+
+    const config: Config = {
+      configurable: {
+        thread_id: thread.thread_id,
       },
     };
 
-    // Return the stream
-    return client.runs.stream(thread.thread_id, ASSISTANT_ID, {
-      input,
-      streamMode: "updates",
-    });
+    return {
+      stream: client.runs.stream(thread.thread_id, ASSISTANT_ID, {
+        input,
+        streamMode: "updates",
+        interruptBefore: ["human_confirmation_js"],
+      }),
+      config,
+    };
   } catch (error) {
     console.error("Error in streamAgentAnalysis:", error);
     throw error;
