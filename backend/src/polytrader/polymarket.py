@@ -93,6 +93,7 @@ class Polymarket:
         self.credentials = self.client.create_or_derive_api_creds()
 
         self.client.set_api_creds(self.credentials)
+        self._init_approvals(False)
 
         print(self.credentials)  # T201 left in place
 

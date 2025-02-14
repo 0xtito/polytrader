@@ -147,6 +147,7 @@ async def generate_serp_queries(
     main_question: str,
     num_queries: int = 3,
     learnings: Optional[List[str]] = None,
+    improvement_instructions: Optional[str] = None,
     *,
     config: RunnableConfig
 ) -> GenerateSerpQueries:
@@ -167,6 +168,9 @@ The research goal is to answer the question: <main_question>{main_question}</mai
 Make sure each query is unique and targets a different aspect of the research:
 
 <prompt>{query}</prompt>
+
+If applicable, there will be some additional feedback on what needs to be improved in the research:
+<improvement_instructions>{improvement_instructions}</improvement_instructions>
 
 {f'Here are some learnings from previous research, use them to generate more specific queries: {chr(10).join(learnings)}' if learnings else ''}
 """
