@@ -14,6 +14,8 @@ import {
   AccordionTrigger,
   AccordionContent,
 } from "@/components/ui/accordion";
+import ResearchCard from "@/components/research-card";
+import AnalysisTabs from "@/components/analysis-tabs";
 
 // Import the newly created types
 import {
@@ -25,6 +27,7 @@ import {
   ReflectionArtifact,
   StreamChunk,
 } from "@/types/agent-stream-types";
+import TradeExecutionCard from "./trade-execution-card";
 
 /**
  * Each event from the agent's streamed updates is stored in `agentEvents`.
@@ -56,6 +59,23 @@ export default function StreamingAgentConsole({
   } | null>(null);
   const [showScrollButton, setShowScrollButton] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const { toast } = useToast();
+
+  // Track research and trade data for tabs
+  const [researchData, setResearchData] = useState<{
+    report: string;
+    learnings: string[];
+    visited_urls?: string[];
+  } | null>(null);
+  const [tradeData, setTradeData] = useState<{
+    orderID: string;
+    takingAmount: string;
+    makingAmount: string;
+    status: string;
+    transactionsHashes: string[];
+    success: boolean;
+    errorMsg?: string;
+  } | null>(null);
 
   const { dismiss } = useToast();
 
@@ -102,6 +122,48 @@ export default function StreamingAgentConsole({
     }
   }, [agentEvents]);
 
+  // Process events to update research and trade data
+  useEffect(() => {
+    agentEvents.forEach((event) => {
+      if (event.name === "research_tools" && event.data.messages?.[0]) {
+        try {
+          const data = JSON.parse(event.data.messages[0].content);
+          setResearchData({
+            report: data.report,
+            learnings: data.learnings,
+            visited_urls: data.visited_urls,
+          });
+        } catch (e) {
+          console.error("Failed to parse research data:", e);
+        }
+      }
+
+      if (event.name === "process_human_input" && event.data.messages?.[0]) {
+        try {
+          const content = event.data.messages[0].content;
+          if (content.includes("Trade executed successfully")) {
+            const match = content.match(/Order response: ({.*})/);
+            if (match) {
+              const orderData = JSON.parse(match[1].replace(/'/g, '"'));
+              setTradeData(orderData);
+
+              // Show toast notification
+              toast({
+                title: "Trade Executed Successfully",
+                description: `Order ${orderData.orderID.slice(
+                  0,
+                  8
+                )}... has been ${orderData.status}`,
+              });
+            }
+          }
+        } catch (e) {
+          console.error("Failed to parse trade data:", e);
+        }
+      }
+    });
+  }, [agentEvents, toast]);
+
   const handleTradeDecision = (decision: "YES" | "NO") => {
     setShowTradeConfirmation(false);
     setTradeToConfirm(null);
@@ -109,36 +171,40 @@ export default function StreamingAgentConsole({
   };
 
   return (
-    <div className="w-full rounded-lg bg-white dark:bg-gray-800 shadow-lg p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-semibold text-gray-900 dark:text-white">
-          AI Agent Analysis
-        </h2>
-        {isStreaming && (
-          <div className="flex items-center gap-2">
-            <div className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
-            <span className="text-sm text-gray-500 dark:text-gray-400">
-              Streaming...
-            </span>
+    <div className="w-full space-y-6">
+      <div className="rounded-lg bg-white dark:bg-gray-800 shadow-lg p-6">
+        <div className="flex items-center justify-between">
+          <h2 className="text-2xl font-semibold text-gray-900 dark:text-white">
+            Polytrader Agent Console
+          </h2>
+          {isStreaming && (
+            <div className="flex items-center gap-2">
+              <div className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
+              <span className="text-sm text-gray-500 dark:text-gray-400">
+                Streaming...
+              </span>
+            </div>
+          )}
+        </div>
+
+        {metadata && (
+          <div className="border rounded-lg p-3 bg-gray-50 dark:bg-gray-900 text-sm mt-4">
+            <p className="font-semibold mb-1">Run ID:</p>
+            <p>{metadata.run_id}</p>
+            <p className="font-semibold mt-2 mb-1">Attempt:</p>
+            <p>{metadata.attempt}</p>
           </div>
         )}
+
+        {/* <div className="mt-6">
+          <AnalysisTabs
+            researchData={researchData || undefined}
+            tradeData={tradeData || undefined}
+          />
+        </div> */}
       </div>
 
-      {metadata && (
-        <div className="border rounded-lg p-3 bg-gray-50 dark:bg-gray-900 text-sm">
-          <p className="font-semibold mb-1">Run ID:</p>
-          <p>{metadata.run_id}</p>
-          <p className="font-semibold mt-2 mb-1">Attempt:</p>
-          <p>{metadata.attempt}</p>
-        </div>
-      )}
-
-      {!isStreaming && agentEvents.length === 0 && (
-        <div className="text-center text-sm text-gray-500 dark:text-gray-400">
-          No data yet
-        </div>
-      )}
-
+      {/* Trade confirmation modal */}
       {showTradeConfirmation && tradeToConfirm && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-xl max-w-md w-full mx-4">
@@ -148,6 +214,10 @@ export default function StreamingAgentConsole({
                 Would you like to proceed with the following trade?
               </p>
               <div className="bg-gray-50 dark:bg-gray-900 p-4 rounded-lg space-y-2">
+                <p>
+                  <span className="font-semibold">Outcome:</span>{" "}
+                  {tradeToConfirm.outcome}
+                </p>
                 <p>
                   <span className="font-semibold">Side:</span>{" "}
                   {tradeToConfirm.side}
@@ -233,6 +303,7 @@ function AgentEventCard({
   name: string;
   data: AgentEvent["data"];
 }) {
+  console.log("data", data);
   switch (name) {
     case "fetch_market_data":
       return <FetchMarketDataCard data={data} />;
@@ -250,16 +321,25 @@ function AgentEventCard({
       return <TradeAgentCard data={data} />;
     case "reflect_on_trade":
       return <ReflectionCard data={data} agentType="Trade" />;
+    case "process_human_input":
+      if (data.order_response) {
+        return <TradeExecutionCard orderData={data.order_response} />;
+      } else {
+        console.log("No order response found");
+        return <div>No order response found</div>;
+      }
     default:
       // fallback
-      return (
-        <div className="border rounded-lg p-4 bg-white dark:bg-gray-800 shadow">
-          <h3 className="font-bold text-lg mb-2">Unknown Node: {name}</h3>
-          <pre className="text-xs whitespace-pre-wrap">
-            {JSON.stringify(data, null, 2)}
-          </pre>
-        </div>
-      );
+      console.log("Unknown node:", name);
+      console.log("data", data);
+    // return (
+    //   <div className="border rounded-lg p-4 bg-white dark:bg-gray-800 shadow">
+    //     <h3 className="font-bold text-lg mb-2">Unknown Node: {name}</h3>
+    //     <pre className="text-xs whitespace-pre-wrap">
+    //       {JSON.stringify(data, null, 2)}
+    //     </pre>
+    //   </div>
+    // );
   }
 }
 
@@ -305,22 +385,27 @@ function FetchMarketDataCard({ data }: { data: AgentEvent["data"] }) {
 /** 2) research_tools node */
 function ResearchToolsCard({ data }: { data: AgentEvent["data"] }) {
   const messages = data.messages || [];
+  const researchData = messages[0]?.content
+    ? JSON.parse(messages[0].content)
+    : null;
+
+  if (!researchData) {
+    return (
+      <div className="border rounded-lg p-4 bg-white dark:bg-gray-800 shadow">
+        <h3 className="font-bold text-lg text-primary mb-2">Research Tools</h3>
+        <p className="text-sm">No research data available.</p>
+      </div>
+    );
+  }
 
   return (
     <div className="border rounded-lg p-4 bg-white dark:bg-gray-800 shadow">
       <h3 className="font-bold text-lg text-primary mb-2">Research Tools</h3>
-      <Accordion type="single" collapsible className="w-full">
-        <AccordionItem value="research_content">
-          <AccordionTrigger>Show Research Content</AccordionTrigger>
-          <AccordionContent>
-            {messages.map((msg: AgentMessage, idx: number) => (
-              <div key={idx} className="mb-4">
-                <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
-              </div>
-            ))}
-          </AccordionContent>
-        </AccordionItem>
-      </Accordion>
+      <ResearchCard
+        report={researchData.report}
+        learnings={researchData.learnings}
+        visited_urls={researchData.visited_urls}
+      />
     </div>
   );
 }

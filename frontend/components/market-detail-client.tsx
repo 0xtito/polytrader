@@ -28,6 +28,7 @@ export default function MarketDetailClient({
   initialMarketData,
 }: MarketDetailClientProps) {
   const [market, setMarket] = useState<GammaMarket | null>(null);
+
   const [loading, setLoading] = useState<boolean>(true);
   const [agentStarted, setAgentStarted] = useState<boolean>(false);
   const [streamOutput, setStreamOutput] = useState<string[]>([]);
@@ -196,13 +197,13 @@ export default function MarketDetailClient({
           <div className="flex items-start gap-6">
             <div className="w-24 h-24 rounded-lg overflow-hidden">
               <img
-                src={market.imageUrl}
-                alt={market.title}
+                src={market.image}
+                alt={market.question}
                 className="w-full h-full object-cover"
               />
             </div>
             <div className="flex-1">
-              <h1 className="text-3xl font-bold mb-2">{market.title}</h1>
+              <h1 className="text-3xl font-bold mb-2">{market.question}</h1>
               <p className="text-muted-foreground whitespace-pre-line">
                 {market.description}
               </p>
@@ -213,21 +214,12 @@ export default function MarketDetailClient({
             <StatCard
               icon={<DollarSignIcon className="w-5 h-5" />}
               title="Volume"
-              value={`$${market.volumeNum.toLocaleString(undefined, {
-                maximumFractionDigits: 0,
-              })}`}
+              value={`$${market.volume.toLocaleString()}`}
             />
             <StatCard
               icon={<BarChart3Icon className="w-5 h-5" />}
               title="Liquidity"
-              value={`$${market.liquidityNum.toLocaleString(undefined, {
-                maximumFractionDigits: 0,
-              })}`}
-            />
-            <StatCard
-              icon={<ChartAreaIcon className="w-5 h-5" />}
-              title="Status"
-              value={market.status.toUpperCase()}
+              value={`$${market.liquidity.toLocaleString()}`}
             />
             <StatCard
               icon={<TimerIcon className="w-5 h-5" />}
@@ -240,7 +232,7 @@ export default function MarketDetailClient({
             <div className="rounded-xl border bg-card p-6">
               <h2 className="text-xl font-semibold mb-4">Current Prices</h2>
               <div className="space-y-4">
-                {market.outcomes.map((outcome, index) => (
+                {market.outcomes.map((outcome: string, index: number) => (
                   <div
                     key={outcome}
                     className="flex items-center justify-between"
@@ -264,14 +256,8 @@ export default function MarketDetailClient({
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
                   <span className="text-muted-foreground">Category</span>
-                  <span className="font-medium">{market.category}</span>
+                  <span className="font-medium">{market.groupItemTitle}</span>
                 </div>
-                {market.subcategory && (
-                  <div className="flex items-center justify-between">
-                    <span className="text-muted-foreground">Subcategory</span>
-                    <span className="font-medium">{market.subcategory}</span>
-                  </div>
-                )}
                 <div className="flex items-center justify-between">
                   <span className="text-muted-foreground">Order Book</span>
                   <span className="font-medium">
@@ -297,12 +283,12 @@ export default function MarketDetailClient({
             <div className="rounded-xl border bg-card p-6">
               <div className="flex items-start gap-4">
                 <img
-                  src={market.imageUrl}
-                  alt={market.title}
+                  src={market.image}
+                  alt={market.question}
                   className="w-16 h-16 rounded-lg"
                 />
                 <div>
-                  <h2 className="text-xl font-semibold">{market.title}</h2>
+                  <h2 className="text-xl font-semibold">{market.question}</h2>
                   <p className="text-sm text-muted-foreground mt-1">
                     Ends {format(new Date(market.endDate), "MMM d, yyyy")}
                   </p>
@@ -316,28 +302,18 @@ export default function MarketDetailClient({
                 <div>
                   <p className="text-sm text-muted-foreground">Volume</p>
                   <p className="font-medium">
-                    $
-                    {market.volumeNum.toLocaleString(undefined, {
-                      maximumFractionDigits: 0,
-                    })}
+                    ${market.volume.toLocaleString()}
                   </p>
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Liquidity</p>
                   <p className="font-medium">
-                    $
-                    {market.liquidityNum.toLocaleString(undefined, {
-                      maximumFractionDigits: 0,
-                    })}
+                    ${market.liquidity.toLocaleString()}
                   </p>
                 </div>
                 <div>
-                  <p className="text-sm text-muted-foreground">Status</p>
-                  <p className="font-medium">{market.status.toUpperCase()}</p>
-                </div>
-                <div>
                   <p className="text-sm text-muted-foreground">Category</p>
-                  <p className="font-medium">{market.category}</p>
+                  <p className="font-medium">{market.groupItemTitle}</p>
                 </div>
               </div>
             </div>

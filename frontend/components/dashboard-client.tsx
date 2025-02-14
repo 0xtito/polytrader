@@ -1,104 +1,209 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+/* <ai_context>
+   DashboardClient fetches and displays markets with sorting & filtering from a server action.
+   This replaces the direct getGammaMarkets calls with a dynamic fetch from getFilteredMarkets.
+</ai_context> */
+
+import React, { useEffect, useState, useTransition } from "react";
 import MarketList from "@/components/market-list";
 import SortFilterBar from "@/components/sort-filter-bar";
 import { Market, Token } from "@/lib/actions/polymarket/getMarkets";
+import { AdvancedMarket } from "@/lib/actions/polymarket/getMarkets";
 import { GammaMarket } from "@/lib/actions/polymarket/get-gamma-markets";
 
+// We import getFilteredMarkets server action
+import { getFilteredMarkets } from "@/lib/actions/polymarket/get-filtered-markets";
+import { FilterBar } from "./markets/filter-bar";
+
 interface DashboardClientProps {
-  initialMarkets: GammaMarket[];
+  /**
+   * We can optionally pass some initial markets or skip it.
+   * If passed, we show them initially until the user triggers a filter.
+   */
+  initialMarkets?: GammaMarket[];
 }
 
+/**
+ * A client component that manages filters and pages, then calls a server action for markets.
+ */
 export default function DashboardClient({
-  initialMarkets,
+  initialMarkets = [],
 }: DashboardClientProps) {
-  const [markets, setMarkets] = useState<GammaMarket[]>([]);
+  const [markets, setMarkets] = useState<GammaMarket[]>(initialMarkets);
   const [loading, setLoading] = useState(true);
-  const [sortBy, setSortBy] = useState<"volume" | "date">("volume");
 
-  useEffect(() => {
-    if (initialMarkets) {
-      setMarkets(initialMarkets);
-      setLoading(false);
-    }
-  }, [initialMarkets]);
+  // pagination
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
 
-  useEffect(() => {
-    if (!markets.length) return;
+  // filter states
+  const [filters, setFilters] = useState({
+    volumeMin: "",
+    volume24hrMin: "",
+    sortBy: "volume" as const,
+    sortOrder: "desc" as const,
+  });
 
-    let sortedMarkets = [...markets];
-    if (sortBy === "volume") {
-      sortedMarkets = markets.sort((a, b) => b.volumeNum - a.volumeNum);
-    } else {
-      sortedMarkets = markets.sort(
-        (a, b) => new Date(b.endDate).getTime() - new Date(a.endDate).getTime()
-      );
-    }
-    setMarkets(sortedMarkets);
-  }, [sortBy, markets.length]);
+  // to handle transitions smoothly
+  const [isPending, startTransition] = useTransition();
 
-  if (loading) {
-    return (
-      <div className="container mx-auto p-6">
-        <h1 className="text-3xl font-bold mb-6">Prediction Markets</h1>
-        <div className="flex items-center justify-center h-64">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
-        </div>
-      </div>
-    );
+  /**
+   * Convert from GammaMarket to the Market format for MarketList
+   * so our existing MarketList can still handle it.
+   */
+  function mapToFrontendMarkets(gammaMarkets: GammaMarket[]): AdvancedMarket[] {
+    return gammaMarkets
+      .filter(
+        (gm) => gm.outcomes?.length === 2 && gm.clobTokenIds?.length === 2
+      )
+      .map((gm) => ({
+        condition_id: gm.id.toString(),
+        question_id: gm.id.toString(),
+        tokens: [
+          {
+            token_id: gm.clobTokenIds[0],
+            outcome: gm.outcomes[0],
+          },
+          {
+            token_id: gm.clobTokenIds[1],
+            outcome: gm.outcomes[1],
+          },
+        ] as [Token, Token],
+        outcomePrices: gm.outcomePrices,
+        rewards: {
+          min_size: 0,
+          max_spread: 0,
+          event_start_date: gm.startDate,
+          event_end_date: gm.endDate,
+          in_game_multiplier: 1,
+          reward_epoch: 0,
+        },
+        minimum_order_size: "1",
+        minimum_tick_size: "0.01",
+        description: gm.description,
+        category: gm.groupItemTitle || "General",
+        end_date: gm.endDate,
+        end_date_iso: gm.endDate,
+        game_start_time: gm.startDate,
+        question: gm.question,
+        market_slug: gm.slug,
+        min_incentive_size: "0",
+        max_incentive_spread: "0",
+        active: gm.active,
+        closed: gm.closed,
+        seconds_delay: 0,
+        icon: gm.image || "",
+        fpmm: "",
+        liquidity: gm.liquidity,
+        volume: gm.volume,
+        volume24hrClob: gm.volume24hrClob,
+        volumeClob: gm.volumeClob,
+        liquidityClob: gm.liquidityClob,
+        volume24hrAmm: gm.volume24hrAmm,
+      }));
   }
 
-  // Convert GammaMarket to the format expected by MarketList
-  const formattedMarkets: Market[] = markets
-    .filter((market) => market.outcomes?.length === 2) // Only include binary markets with valid outcomes
-    .map((market) => ({
-      condition_id: market.id.toString(),
-      question_id: market.id.toString(),
-      tokens: [
-        {
-          token_id: market.clobTokenIds[0],
-          outcome: market.outcomes[0],
-        },
-        {
-          token_id: market.clobTokenIds[1],
-          outcome: market.outcomes[1],
-        },
-      ] as [Token, Token],
-      rewards: {
-        min_size: 0,
-        max_spread: 0,
-        event_start_date: market.startDate,
-        event_end_date: market.endDate,
-        in_game_multiplier: 1,
-        reward_epoch: 0,
-      },
-      minimum_order_size: "1",
-      minimum_tick_size: "0.01",
-      description: market.description,
-      category: market.category,
-      end_date: market.endDate,
-      end_date_iso: market.endDate,
-      game_start_time: market.startDate,
-      question: market.title,
-      market_slug: market.slug,
-      min_incentive_size: "0",
-      max_incentive_spread: "0",
-      active: market.active,
-      closed: market.closed,
-      seconds_delay: 0,
-      icon: market.imageUrl || "",
-      fpmm: "",
-    }));
+  /**
+   * Fetch markets from server action whenever filters or currentPage changes.
+   * Also do so initially if no initial markets were provided.
+   */
+  useEffect(() => {
+    if (!initialMarkets.length) {
+      fetchMarkets();
+    } else {
+      setLoading(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (initialMarkets.length) {
+      // Once the user modifies filters, we want to re-fetch
+      // But if we had initial markets, we only skip the immediate re-fetch
+      // so let's do it whenever filters or page changes
+      fetchMarkets();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filters, currentPage]);
+
+  async function fetchMarkets() {
+    setLoading(true);
+    startTransition(async () => {
+      try {
+        const res = await getFilteredMarkets({
+          ...filters,
+          page: currentPage,
+          limit: 12, // you can set your own limit
+        });
+        setMarkets(res.markets);
+        setTotalPages(res.totalPages);
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setLoading(false);
+      }
+    });
+  }
+
+  function handleFilterChange(newFilters: typeof filters) {
+    setFilters(newFilters);
+    setCurrentPage(1);
+  }
+
+  function handlePageChange(newPage: number) {
+    if (newPage < 1 || newPage > totalPages) return;
+    setCurrentPage(newPage);
+  }
 
   return (
     <div className="container mx-auto p-6">
       <h1 className="text-3xl font-bold mb-6">Prediction Markets</h1>
-      <SortFilterBar
-        sortBy={sortBy}
-        onSortChange={(newSort) => setSortBy(newSort)}
-      />
-      <MarketList markets={formattedMarkets} />
+
+      <FilterBar onFilterChange={handleFilterChange} />
+
+      {/* <SortFilterBar
+        sortBy={filters.sortBy}
+        onSortChange={(sortVal) => {
+          setFilters((prev) => ({ ...prev, sortBy: sortVal }));
+          setCurrentPage(1);
+        }}
+      /> */}
+
+      {/* We can build more elaborate filter UI or incorporate an existing FilterBar */}
+      {/* For example, let's show a simpler approach */}
+      {/* Could re-use FilterBar from /markets/filter-bar if we prefer that style */}
+
+      <div className="mb-4"></div>
+
+      {loading || isPending ? (
+        <div className="flex items-center justify-center h-32">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+        </div>
+      ) : (
+        <MarketList markets={mapToFrontendMarkets(markets)} />
+      )}
+
+      {/* Pagination controls */}
+      <div className="flex items-center justify-center mt-8 gap-4">
+        <button
+          className="bg-muted text-muted-foreground px-3 py-2 rounded disabled:opacity-50"
+          onClick={() => handlePageChange(currentPage - 1)}
+          disabled={currentPage <= 1}
+        >
+          Prev
+        </button>
+        <span className="text-sm">
+          Page {currentPage} of {totalPages}
+        </span>
+        <button
+          className="bg-muted text-muted-foreground px-3 py-2 rounded disabled:opacity-50"
+          onClick={() => handlePageChange(currentPage + 1)}
+          disabled={currentPage >= totalPages}
+        >
+          Next
+        </button>
+      </div>
     </div>
   );
 }

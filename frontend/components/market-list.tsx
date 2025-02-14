@@ -4,18 +4,25 @@
 "use client";
 
 import React from "react";
-import MarketCard from "./market-card";
+import { MarketCard } from "@/components/markets/market-card";
 import { Market } from "@/lib/actions/polymarket/getMarkets";
+import { AdvancedMarket } from "@/lib/actions/polymarket/getMarkets";
+import Link from "next/link";
 
 interface MarketListProps {
-  markets: Market[];
+  markets: AdvancedMarket[];
 }
 
 export default function MarketList({ markets }: MarketListProps) {
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
       {markets.map((market) => (
-        <MarketCard key={market.condition_id} market={market} />
+        <Link
+          key={market.condition_id}
+          href={`/markets/${market.condition_id}`}
+        >
+          <MarketCard market={market} />
+        </Link>
       ))}
     </div>
   );
