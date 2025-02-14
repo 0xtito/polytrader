@@ -1,10 +1,5 @@
 "use client";
 
-/* <ai_context>
-   DashboardClient fetches and displays markets with sorting & filtering from a server action.
-   This replaces the direct getGammaMarkets calls with a dynamic fetch from getFilteredMarkets.
-</ai_context> */
-
 import React, { useEffect, useState, useTransition } from "react";
 import { AdvancedMarket } from "@/lib/actions/polymarket/getMarkets";
 import { getFilteredMarkets } from "@/lib/actions/polymarket/get-filtered-markets";
@@ -104,11 +99,10 @@ export default function DashboardClient({
     <div className="container mx-auto px-4 py-8 max-w-7xl">
       <div className="text-center mb-12">
         <h1 className="text-4xl font-bold mb-3 bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">
-          Prediction Markets
+          Polytrader Agent
         </h1>
         <p className="text-muted-foreground text-lg max-w-2xl mx-auto">
-          Explore and trade on a wide range of prediction markets. Use filters
-          below to find the most active and interesting markets.
+          Pick any market, and let Poly do the rest for you.
         </p>
       </div>
 

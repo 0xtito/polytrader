@@ -1,8 +1,3 @@
-/* <ai_context>
-   AgentConsole component streams real-time AI agent analysis output.
-   Now updated to use typed interfaces from agent-stream-types.ts
-   and to color-code reflection artifacts based on is_satisfactory.
-</ai_context> */
 "use client";
 
 import React, { useEffect, useState, useRef, useCallback } from "react";
@@ -409,14 +404,49 @@ function ResearchToolsCard({ data }: { data: AgentEvent["data"] }) {
   );
 }
 
+/** Shared ToolCallsCard component for displaying tool calls */
+function ToolCallsCard({ messages }: { messages: AgentMessage[] }) {
+  // Get the last message's tool calls
+  const lastMessage = messages[messages.length - 1];
+  const toolCalls = lastMessage?.tool_calls || [];
+
+  if (!toolCalls.length) return null;
+
+  return (
+    <div className="mt-4 space-y-4">
+      <h4 className="font-semibold text-sm text-muted-foreground">
+        Tool Calls
+      </h4>
+      <div className="space-y-2">
+        {toolCalls.map((call) => (
+          <div
+            key={call.id}
+            className="bg-muted/50 rounded-md p-3 text-sm space-y-2"
+          >
+            <p className="font-medium text-primary">{call.name}</p>
+            <pre className="text-xs overflow-x-auto whitespace-pre-wrap">
+              {JSON.stringify(call.args, null, 2)}
+            </pre>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /** 3) research_agent node */
 function ResearchAgentCard({ data }: { data: AgentEvent["data"] }) {
   const ext = data.external_research_info as ExternalResearchInfo | undefined;
+  const messages = data.messages || [];
+
+  console.log("messages", messages);
 
   return (
     <div className="border rounded-lg p-4 bg-white dark:bg-gray-800 shadow">
       <h3 className="font-bold text-lg text-primary mb-2">Research Agent</h3>
-      {ext && (
+
+      <ToolCallsCard messages={messages} />
+      {ext ? (
         <>
           <p className="text-sm mb-2">
             <span className="font-semibold">Research Summary:</span>{" "}
@@ -450,6 +480,8 @@ function ResearchAgentCard({ data }: { data: AgentEvent["data"] }) {
             </Accordion>
           )}
         </>
+      ) : (
+        <ToolCallsCard messages={messages} />
       )}
     </div>
   );
@@ -526,12 +558,14 @@ function ReflectionCard({
 /** 5) analysis_agent node */
 function AnalysisAgentCard({ data }: { data: AgentEvent["data"] }) {
   const analysisInfo = data.analysis_info as AnalysisInfo | undefined;
+  const messages = data.messages || [];
 
   if (!analysisInfo) {
     return (
       <div className="border rounded-lg p-4 bg-white dark:bg-gray-800 shadow">
         <h3 className="font-bold text-lg text-primary mb-2">Analysis Agent</h3>
         <p className="text-sm">No analysis info yet.</p>
+        <ToolCallsCard messages={messages} />
       </div>
     );
   }
