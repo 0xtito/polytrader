@@ -648,8 +648,28 @@ async def deep_research(
     """
     print(f"Starting deep_research for query='{query}' with max_depth={max_depth}, max_links={max_links}")
 
+    improvement_instructions  = None
+    research_report = state.research_report
+
+    if (state.messages and 
+        len(state.messages) > 0 and 
+        hasattr(state.messages[-1], 'additional_kwargs') and 
+        state.messages[-1].additional_kwargs and 
+        "improvement_instructions" in state.messages[-1].additional_kwargs):
+        improvement_instructions = state.messages[-1].additional_kwargs["improvement_instructions"]
+
+    if improvement_instructions:
+        query = improvement_instructions
+    elif research_report and "report" in research_report:
+        query = research_report["report"]
+    else:
+        query = state.market_data.get("question", "")
+
     # Load configuration
     configuration = Configuration.from_runnable_config(config)
+
+
+    print("CALLING RECURSIVE FUNCTION")
 
     async def _deep_research_recursive(
         current_query: str,
@@ -668,6 +688,7 @@ async def deep_research(
                 "totalQueries": 0,
                 "completedQueries": 0
             }
+
             
         # Generate SERP queries
         serp_queries = await generate_serp_queries(
@@ -675,6 +696,7 @@ async def deep_research(
             main_question=state.market_data.get("question", ""),
             num_queries=breadth,
             learnings=learnings,
+            improvement_instructions=improvement_instructions,
             config=config
         )
 
@@ -791,7 +813,9 @@ async def deep_research(
     research_results = await _deep_research_recursive(
         query,
         max_links,
-        max_depth
+        max_depth,
+        learnings=state.research_report.get("learnings", []) if state.research_report else [],
+        visited_urls=state.research_report.get("visitedUrls", []) if state.research_report else [],
     )
 
     # print("--- RESEARCH RESULTS ---")
