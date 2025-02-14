@@ -49,6 +49,22 @@ langgraph dev
 
 if you have langgraph installed globally or in your virtual environment.
 
+## Configuring Polymarket
+
+- To be able to get out of positions that your agent gets in, you will need to have to sign into Polymarket with your Agent's wallet and create the Proxy Contract.
+
+  - Ideally, this will all be done programmatically, but for now, you can do it manually
+
+- Then, add the `POLYMARKET_PROXY_ADDRESS` to the `.env` file in both the `backend/` and `frontend/` directories.
+
+  - This is the address you will be depositing the funds to, since the agent will be the one creating the orders. Ultimately, Poly
+
+- Go to [Polymarket](https://polymarket.com/) and connect your wallet. You will be prompted to create a proxy contract.
+
+- Then back in the repo, inside of [polymarket.py](backend/src/polytrader/polymarket.py), you change the value based into `self._init_approvals(False)` to `self._init_approvals(True)`.
+  - This only needs to be done once, and will start the first time your run `make lg-server`.
+    - notice the print logs in the terminal, and you will see the API keys that are being used.
+
 ## Tests (incomplete)
 
 We use pytest (and pytest-asyncio) for testing. To run tests:
