@@ -752,7 +752,7 @@ async def trade_agent_node(
                 "size": {
                     "type": "number",
                     "description": (
-                        "The size (in USDC or shares) that the user should trade. "
+                        "The size (in USDC if buying, shares if selling) that the user should trade. "
                         "If side=NO_TRADE, typically set this to 0. "
                         "Must not exceed 'available_funds' if side=BUY."
                     )
@@ -784,6 +784,8 @@ async def trade_agent_node(
         }
     }
 
+    available_funds = poly_client.get_usdc_balance()
+
     # Build a comprehensive prompt that includes all available information
     system_text = f"""You are a trade decision maker. Your task is to make a SINGLE, CLEAR trade decision based on all available information.
 You must use the trade tool ONCE to record your decision. Do not make multiple trade calls.
@@ -793,7 +795,7 @@ Available Information:
 2. Research Report: {json.dumps(state.research_report or {}, indent=2)}
 3. Analysis Info: {json.dumps(state.analysis_info or {}, indent=2)}
 4. User Positions (for this or related markets): {json.dumps(state.positions or {}, indent=2)}
-5. User's Available Funds for a new position: {state.available_funds}
+5. User's Available Funds for a new position: {available_funds}
 6. Market Tokens: {[{"token_id": t.token_id, "outcome": t.outcome} for t in state.tokens] if state.tokens else []}
 
 You MAY ONLY choose 'side' from this list: {possible_sides}.
@@ -1136,7 +1138,7 @@ async def process_human_input_node(
             if not state.debug:
                 order_response = poly_client.execute_market_order(
                     token_id=token_id,
-                    amount=4,
+                    amount=size,
                     side=side
                 )
 
