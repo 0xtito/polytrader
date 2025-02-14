@@ -1,5 +1,8 @@
 "use server";
 
+import { mapToFrontendMarkets } from "@/lib/utils";
+import { AdvancedMarket } from "./getMarkets";
+
 export interface RawGammaMarket {
   id: string;
   question: string;
@@ -93,7 +96,7 @@ export interface GammaMarket {
 }
 
 interface GammaMarketsResponse {
-  markets: GammaMarket[];
+  markets: AdvancedMarket[];
 }
 
 function safeJsonParse<T>(
@@ -188,43 +191,42 @@ export async function getGammaMarkets(
     }
 
     // Parse the JSON strings in the response
-    const data: GammaMarketsResponse = {
-      markets: rawData
-        .filter((market: RawGammaMarket) => {
-          // Only include markets that have clobTokenIds
-          const tokens = safeJsonParse<string[]>(market.clobTokenIds, []);
-          return tokens.length === 2; // Ensure it's a binary market with both token IDs
-        })
-        .map((market: RawGammaMarket) => {
-          // Create the base market object
-          const baseMarket = {
-            ...market,
-            outcomes: safeJsonParse<string[]>(market.outcomes, []),
-            clobTokenIds: safeJsonParse<string[]>(market.clobTokenIds, []),
-            outcomePrices: safeJsonParse<string[]>(market.outcomePrices, []),
-            volumeNum: parseFloat(market.volume || "0"),
-            liquidityNum: parseFloat(market.liquidity || "0"),
-            title: market.question,
-            endDate: market.endDate,
-            startDate: market.startDate,
-            imageUrl: market.image,
-            category: market.groupItemTitle || "General",
-            subcategory: "",
-            status: market.closed
-              ? "closed"
-              : market.active
-              ? "active"
-              : "inactive",
-          };
+    const data: GammaMarket[] = rawData
+      .filter((market: RawGammaMarket) => {
+        // Only include markets that have clobTokenIds
+        const tokens = safeJsonParse<string[]>(market.clobTokenIds, []);
+        return tokens.length === 2; // Ensure it's a binary market with both token IDs
+      })
+      .map((market: RawGammaMarket) => {
+        // Create the base market object
+        const baseMarket = {
+          ...market,
+          outcomes: safeJsonParse<string[]>(market.outcomes, []),
+          clobTokenIds: safeJsonParse<string[]>(market.clobTokenIds, []),
+          outcomePrices: safeJsonParse<string[]>(market.outcomePrices, []),
+          volumeNum: parseFloat(market.volume || "0"),
+          liquidityNum: parseFloat(market.liquidity || "0"),
+          title: market.question,
+          endDate: market.endDate,
+          startDate: market.startDate,
+          imageUrl: market.image,
+          category: market.groupItemTitle || "General",
+          subcategory: "",
+          status: market.closed
+            ? "closed"
+            : market.active
+            ? "active"
+            : "inactive",
+        };
 
-          return baseMarket;
-        }),
-    };
-
+        return baseMarket;
+      });
     // log 5 markets
     // console.log(data.markets.slice(0, 5));
 
-    return data;
+    const frontendMarkets = mapToFrontendMarkets(data);
+
+    return { markets: frontendMarkets };
   } catch (error) {
     console.error("Error fetching Gamma markets:", error);
     throw error;

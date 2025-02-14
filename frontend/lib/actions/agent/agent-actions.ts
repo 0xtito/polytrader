@@ -1,11 +1,11 @@
 "use server";
 
 import { ActionState } from "@/types/actions-types";
-import {
-  AgentBalance,
-  DepositResult,
-  WithdrawResult,
-} from "@/types/agent-types";
+// import {
+//   AgentBalance,
+//   DepositResult,
+//   WithdrawResult,
+// } from "@/types/agent-run-types";
 
 export async function getAgentBalanceAction(): Promise<
   ActionState<AgentBalance>

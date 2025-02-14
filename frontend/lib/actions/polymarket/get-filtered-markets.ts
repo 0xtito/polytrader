@@ -5,7 +5,8 @@
    based on user-provided filters.
 </ai_context> */
 
-import { getGammaMarkets, GammaMarket } from "./get-gamma-markets";
+import { getGammaMarkets } from "./get-gamma-markets";
+import { AdvancedMarket } from "./getMarkets";
 
 /**
  * Filter and sort fields passed from the FilterBar / DashboardClient
@@ -39,7 +40,7 @@ export async function getFilteredMarkets(filters: Partial<MarketFilters>) {
   let offset = 0;
   const chunkSize = 200; // retrieve 200 at a time
   const maxFetchCount = 2000; // safety net to avoid excessive requests
-  const allMarkets: GammaMarket[] = [];
+  const allMarkets: AdvancedMarket[] = [];
 
   while (true) {
     const { markets } = await getGammaMarkets(chunkSize, offset, {

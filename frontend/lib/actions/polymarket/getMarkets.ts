@@ -41,10 +41,10 @@ export interface Market {
 export interface AdvancedMarket extends Market {
   volume: string;
   volume24hrClob: number;
-  volume24hrAmm: string;
+  volume24hrAmm: number;
   liquidity: string;
-  liquidityClob: string;
-  volumeClob: string;
+  liquidityClob: number;
+  volumeClob: number;
 }
 
 interface MarketsResponse {

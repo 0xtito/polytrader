@@ -36,18 +36,3 @@ export async function handleInterrupt(decision: "YES" | "NO", config: Config) {
     throw error;
   }
 }
-
-export async function writeStreamToFile(streamData: any) {
-  const date = new Date().toISOString().split("T")[0];
-  const fs = require("fs");
-  const path = require("path");
-
-  // Create data directory if it doesn't exist
-  const dataDir = path.join(process.cwd(), "data");
-  if (!fs.existsSync(dataDir)) {
-    fs.mkdirSync(dataDir, { recursive: true });
-  }
-
-  const filename = path.join(dataDir, `stream_${date}.json`);
-  fs.writeFileSync(filename, JSON.stringify(streamData, null, 2));
-}
