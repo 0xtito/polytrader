@@ -119,6 +119,7 @@ export interface AnalysisInfo {
  */
 export interface TradeInfo {
   side: "BUY" | "SELL" | "NO_TRADE";
+  outcome: "YES" | "NO";
   market_id: string;
   token_id: string;
   size: number;

@@ -18,6 +18,7 @@ export interface Market {
   condition_id: string;
   question_id: string;
   tokens: [Token, Token];
+  outcomePrices: string[];
   rewards: Rewards;
   minimum_order_size: string;
   minimum_tick_size: string;
@@ -35,6 +36,15 @@ export interface Market {
   seconds_delay: number;
   icon: string;
   fpmm: string;
+}
+
+export interface AdvancedMarket extends Market {
+  volume: string;
+  volume24hrClob: number;
+  volume24hrAmm: string;
+  liquidity: string;
+  liquidityClob: string;
+  volumeClob: string;
 }
 
 interface MarketsResponse {

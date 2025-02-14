@@ -1,11 +1,6 @@
 "use server";
 
-interface Token {
-  token_id: string;
-  token_address: string;
-  token_name: string;
-  token_symbol: string;
-}
+import { Token } from "./getMarkets";
 
 interface Rewards {
   asset_address: string;

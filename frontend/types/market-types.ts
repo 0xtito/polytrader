@@ -1,3 +1,5 @@
+import { Token } from "@/lib/actions/polymarket/getMarkets";
+
 interface ClobReward {
   id: string;
   conditionId: string;
@@ -6,13 +8,6 @@ interface ClobReward {
   rewardsDailyRate: number;
   startDate: string;
   endDate: string;
-}
-
-export interface Token {
-  token_id: string;
-  outcome: string;
-  price: number;
-  winner: boolean;
 }
 
 export interface PolymarketData {

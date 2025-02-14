@@ -46,20 +46,50 @@ export interface RawGammaMarket {
   clobTokenIds: string; // This is a JSON string
 }
 
-export interface GammaMarket
-  extends Omit<RawGammaMarket, "outcomes" | "clobTokenIds" | "outcomePrices"> {
+export interface GammaMarket {
+  id: string;
+  question: string;
+  conditionId: string;
+  slug: string;
+  resolutionSource: string;
+  endDate: string;
+  startDate: string;
+  image: string;
+  icon: string;
+  description: string;
   outcomes: string[];
   clobTokenIds: string[];
   outcomePrices: string[];
-  volumeNum: number; // Computed from volumeAmm + volumeClob
-  liquidityNum: number; // Computed from liquidityAmm + liquidityClob
-  title: string; // Same as question
-  endDate: string; // Same as endDate
-  startDate: string; // Same as startDate
-  imageUrl: string; // Same as image
-  category: string; // We can default this to "General" or extract from groupItemTitle
-  subcategory: string; // Can be empty string
-  status: string; // Computed from active/closed
+  volume: string;
+  liquidity: string;
+  active: boolean;
+  closed: boolean;
+  marketMakerAddress: string;
+  createdAt: string;
+  updatedAt: string;
+  new: boolean;
+  featured: boolean;
+  submitted_by: string;
+  archived: boolean;
+  restricted: boolean;
+  groupItemTitle: string;
+  groupItemThreshold: string;
+  enableOrderBook: boolean;
+  orderPriceMinTickSize: number;
+  orderMinSize: number;
+  startDateIso: string;
+  volume24hrAmm: number;
+  volume24hrClob: number;
+  volumeAmm: number;
+  volumeClob: number;
+  liquidityAmm: number;
+  liquidityClob: number;
+  negRisk: boolean;
+  spread: number;
+  oneDayPriceChange: number;
+  lastTradePrice: number;
+  bestBid: number;
+  bestAsk: number;
 }
 
 interface GammaMarketsResponse {

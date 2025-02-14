@@ -1,11 +1,12 @@
 "use server";
 
 import { Client, type Config } from "@langchain/langgraph-sdk";
+import { Token } from "../polymarket/getMarkets";
 
 const DEPLOYMENT_URL = process.env.LANGGRAPH_DEPLOYMENT_URL;
 const ASSISTANT_ID = "polytrader";
 
-export async function streamAgentAnalysis(marketId: number) {
+export async function streamAgentAnalysis(marketId: number, tokens: Token[]) {
   try {
     console.log("DEPLOYMENT_URL", DEPLOYMENT_URL);
     const client = new Client({ apiUrl: DEPLOYMENT_URL! });
@@ -17,6 +18,7 @@ export async function streamAgentAnalysis(marketId: number) {
     const input = {
       market_id: marketId.toString(),
       from_js: true,
+      tokens: tokens,
     };
 
     const config: Config = {
