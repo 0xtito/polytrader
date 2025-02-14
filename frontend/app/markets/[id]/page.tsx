@@ -1,4 +1,4 @@
-import MarketDetailClient from "@/components/market-detail-client";
+import MarketDetailClient from "./_components/market-detail-client";
 import { getGammaMarkets } from "@/lib/actions/polymarket/get-gamma-markets";
 
 export default async function MarketDetailPage({

@@ -6,22 +6,21 @@
 </ai_context> */
 
 import React, { useEffect, useState, useTransition } from "react";
-import MarketList from "@/components/market-list";
-import SortFilterBar from "@/components/sort-filter-bar";
-import { Market, Token } from "@/lib/actions/polymarket/getMarkets";
 import { AdvancedMarket } from "@/lib/actions/polymarket/getMarkets";
-import { GammaMarket } from "@/lib/actions/polymarket/get-gamma-markets";
-
-// We import getFilteredMarkets server action
 import { getFilteredMarkets } from "@/lib/actions/polymarket/get-filtered-markets";
-import { FilterBar } from "./markets/filter-bar";
+
+import { FilterBar } from "@/app/_components/filter-bar";
+import MarketList from "@/app/_components/market-list";
+import type { FilterState } from "@/app/_components/filter-bar";
+
+import { mapToFrontendMarkets } from "@/lib/utils";
 
 interface DashboardClientProps {
   /**
    * We can optionally pass some initial markets or skip it.
    * If passed, we show them initially until the user triggers a filter.
    */
-  initialMarkets?: GammaMarket[];
+  initialMarkets?: AdvancedMarket[];
 }
 
 /**
@@ -30,7 +29,7 @@ interface DashboardClientProps {
 export default function DashboardClient({
   initialMarkets = [],
 }: DashboardClientProps) {
-  const [markets, setMarkets] = useState<GammaMarket[]>(initialMarkets);
+  const [markets, setMarkets] = useState<AdvancedMarket[]>(initialMarkets);
   const [loading, setLoading] = useState(true);
 
   // pagination
@@ -38,71 +37,15 @@ export default function DashboardClient({
   const [totalPages, setTotalPages] = useState(1);
 
   // filter states
-  const [filters, setFilters] = useState({
+  const [filters, setFilters] = useState<FilterState>({
     volumeMin: "",
     volume24hrMin: "",
-    sortBy: "volume" as const,
-    sortOrder: "desc" as const,
+    sortBy: "volume",
+    sortOrder: "desc",
   });
 
   // to handle transitions smoothly
   const [isPending, startTransition] = useTransition();
-
-  /**
-   * Convert from GammaMarket to the Market format for MarketList
-   * so our existing MarketList can still handle it.
-   */
-  function mapToFrontendMarkets(gammaMarkets: GammaMarket[]): AdvancedMarket[] {
-    return gammaMarkets
-      .filter(
-        (gm) => gm.outcomes?.length === 2 && gm.clobTokenIds?.length === 2
-      )
-      .map((gm) => ({
-        condition_id: gm.id.toString(),
-        question_id: gm.id.toString(),
-        tokens: [
-          {
-            token_id: gm.clobTokenIds[0],
-            outcome: gm.outcomes[0],
-          },
-          {
-            token_id: gm.clobTokenIds[1],
-            outcome: gm.outcomes[1],
-          },
-        ] as [Token, Token],
-        outcomePrices: gm.outcomePrices,
-        rewards: {
-          min_size: 0,
-          max_spread: 0,
-          event_start_date: gm.startDate,
-          event_end_date: gm.endDate,
-          in_game_multiplier: 1,
-          reward_epoch: 0,
-        },
-        minimum_order_size: "1",
-        minimum_tick_size: "0.01",
-        description: gm.description,
-        category: gm.groupItemTitle || "General",
-        end_date: gm.endDate,
-        end_date_iso: gm.endDate,
-        game_start_time: gm.startDate,
-        question: gm.question,
-        market_slug: gm.slug,
-        min_incentive_size: "0",
-        max_incentive_spread: "0",
-        active: gm.active,
-        closed: gm.closed,
-        seconds_delay: 0,
-        icon: gm.image || "",
-        fpmm: "",
-        liquidity: gm.liquidity,
-        volume: gm.volume,
-        volume24hrClob: gm.volume24hrClob,
-        volumeClob: gm.volumeClob,
-        liquidityClob: gm.liquidityClob,
-        volume24hrAmm: gm.volume24hrAmm,
-      }));
-  }
 
   /**
    * Fetch markets from server action whenever filters or currentPage changes.
@@ -119,9 +62,6 @@ export default function DashboardClient({
 
   useEffect(() => {
     if (initialMarkets.length) {
-      // Once the user modifies filters, we want to re-fetch
-      // But if we had initial markets, we only skip the immediate re-fetch
-      // so let's do it whenever filters or page changes
       fetchMarkets();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -134,7 +74,7 @@ export default function DashboardClient({
         const res = await getFilteredMarkets({
           ...filters,
           page: currentPage,
-          limit: 12, // you can set your own limit
+          limit: 12,
         });
         setMarkets(res.markets);
         setTotalPages(res.totalPages);
@@ -157,31 +97,27 @@ export default function DashboardClient({
   }
 
   return (
-    <div className="container mx-auto p-6">
-      <h1 className="text-3xl font-bold mb-6">Prediction Markets</h1>
+    <div className="container mx-auto px-4 py-8 max-w-7xl">
+      <div className="text-center mb-12">
+        <h1 className="text-4xl font-bold mb-3 bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">
+          Prediction Markets
+        </h1>
+        <p className="text-muted-foreground text-lg max-w-2xl mx-auto">
+          Explore and trade on a wide range of prediction markets. Use filters
+          below to find the most active and interesting markets.
+        </p>
+      </div>
 
-      <FilterBar onFilterChange={handleFilterChange} />
-
-      {/* <SortFilterBar
-        sortBy={filters.sortBy}
-        onSortChange={(sortVal) => {
-          setFilters((prev) => ({ ...prev, sortBy: sortVal }));
-          setCurrentPage(1);
-        }}
-      /> */}
-
-      {/* We can build more elaborate filter UI or incorporate an existing FilterBar */}
-      {/* For example, let's show a simpler approach */}
-      {/* Could re-use FilterBar from /markets/filter-bar if we prefer that style */}
-
-      <div className="mb-4"></div>
+      <div className="mb-8">
+        <FilterBar onFilterChange={handleFilterChange} />
+      </div>
 
       {loading || isPending ? (
         <div className="flex items-center justify-center h-32">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
         </div>
       ) : (
-        <MarketList markets={mapToFrontendMarkets(markets)} />
+        <MarketList markets={markets} />
       )}
 
       {/* Pagination controls */}

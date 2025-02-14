@@ -1,7 +1,8 @@
+"use client";
+
 /* <ai_context>
    MarketCard component displays a summary of a market.
 </ai_context> */
-"use client";
 
 import React from "react";
 import Link from "next/link";

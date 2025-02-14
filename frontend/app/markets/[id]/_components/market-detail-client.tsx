@@ -1,33 +1,27 @@
 "use client";
+/* eslint-disable @typescript-eslint/no-explicit-any */
 
 import React, { useEffect, useState } from "react";
 import { format } from "date-fns";
-import {
-  ArrowUpIcon,
-  ChartAreaIcon,
-  BarChart3Icon,
-  TimerIcon,
-  DollarSignIcon,
-} from "lucide-react";
+import { BarChart3Icon, TimerIcon, DollarSignIcon } from "lucide-react";
 import {
   streamAgentAnalysis,
-  writeStreamToFile,
+  // writeStreamToFile,
 } from "@/lib/actions/agent/stream-agent-analysis";
-import StreamingAgentConsole from "./streaming-agent-console";
-import { GammaMarket } from "@/lib/actions/polymarket/get-gamma-markets";
 import { AgentEvent } from "@/types/agent-stream-types";
 import { handleInterrupt } from "@/lib/actions/agent/handle-interruption";
-
+import StreamingAgentConsole from "./streaming-agent-console";
+import { AdvancedMarket } from "@/lib/actions/polymarket/getMarkets";
 interface MarketDetailClientProps {
   marketId: string;
-  initialMarketData: GammaMarket;
+  initialMarketData: AdvancedMarket;
 }
 
 export default function MarketDetailClient({
   marketId,
   initialMarketData,
 }: MarketDetailClientProps) {
-  const [market, setMarket] = useState<GammaMarket | null>(null);
+  const [market, setMarket] = useState<AdvancedMarket | null>(null);
 
   const [loading, setLoading] = useState<boolean>(true);
   const [agentStarted, setAgentStarted] = useState<boolean>(false);
@@ -50,7 +44,10 @@ export default function MarketDetailClient({
     const streamData: any[] = [];
 
     try {
-      const { stream, config } = await streamAgentAnalysis(parseInt(marketId));
+      const { stream, config } = await streamAgentAnalysis(
+        parseInt(marketId),
+        market?.tokens || []
+      );
       setStreamConfig(config);
       let rawStreamData = [];
 
@@ -113,7 +110,7 @@ export default function MarketDetailClient({
       }
 
       // Write stream data to file
-      await writeStreamToFile(rawStreamData);
+      // await writeStreamToFile(rawStreamData);
     } catch (err) {
       console.error("Streaming error:", err);
       setError(
@@ -162,7 +159,7 @@ export default function MarketDetailClient({
       }
 
       // Write stream data to file
-      await writeStreamToFile(rawStreamData);
+      // await writeStreamToFile(rawStreamData);
     } catch (err) {
       console.error("Error handling trade confirmation:", err);
       setError(
@@ -186,10 +183,6 @@ export default function MarketDetailClient({
     );
   }
 
-  // No price change data in Gamma API
-  // const priceChangeColor = "text-gray-500";
-  // const _priceChangeIcon = <ArrowUpIcon className="w-4 h-4" />;
-
   return (
     <div className="container mx-auto p-6 space-y-6">
       {!agentStarted ? (
@@ -197,7 +190,7 @@ export default function MarketDetailClient({
           <div className="flex items-start gap-6">
             <div className="w-24 h-24 rounded-lg overflow-hidden">
               <img
-                src={market.image}
+                src={market.icon}
                 alt={market.question}
                 className="w-full h-full object-cover"
               />
@@ -224,7 +217,7 @@ export default function MarketDetailClient({
             <StatCard
               icon={<TimerIcon className="w-5 h-5" />}
               title="Ends"
-              value={format(new Date(market.endDate), "MMM d, yyyy")}
+              value={format(new Date(market.end_date), "MMM d, yyyy")}
             />
           </div>
 
@@ -232,7 +225,7 @@ export default function MarketDetailClient({
             <div className="rounded-xl border bg-card p-6">
               <h2 className="text-xl font-semibold mb-4">Current Prices</h2>
               <div className="space-y-4">
-                {market.outcomes.map((outcome: string, index: number) => (
+                {market.outcomePrices.map((outcome: string, index: number) => (
                   <div
                     key={outcome}
                     className="flex items-center justify-between"
@@ -256,13 +249,7 @@ export default function MarketDetailClient({
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
                   <span className="text-muted-foreground">Category</span>
-                  <span className="font-medium">{market.groupItemTitle}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground">Order Book</span>
-                  <span className="font-medium">
-                    {market.enableOrderBook ? "Enabled" : "Disabled"}
-                  </span>
+                  <span className="font-medium">{market.category}</span>
                 </div>
               </div>
             </div>
@@ -283,14 +270,14 @@ export default function MarketDetailClient({
             <div className="rounded-xl border bg-card p-6">
               <div className="flex items-start gap-4">
                 <img
-                  src={market.image}
+                  src={market.icon}
                   alt={market.question}
                   className="w-16 h-16 rounded-lg"
                 />
                 <div>
                   <h2 className="text-xl font-semibold">{market.question}</h2>
                   <p className="text-sm text-muted-foreground mt-1">
-                    Ends {format(new Date(market.endDate), "MMM d, yyyy")}
+                    Ends {format(new Date(market.end_date), "MMM d, yyyy")}
                   </p>
                 </div>
               </div>
@@ -313,7 +300,7 @@ export default function MarketDetailClient({
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Category</p>
-                  <p className="font-medium">{market.groupItemTitle}</p>
+                  <p className="font-medium">{market.category}</p>
                 </div>
               </div>
             </div>

@@ -1,4 +1,4 @@
-import DashboardClient from "../components/dashboard-client";
+import DashboardClient from "./_components/dashboard-client";
 import { getGammaMarkets } from "@/lib/actions/polymarket/get-gamma-markets";
 
 export default async function Page() {

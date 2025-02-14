@@ -19,6 +19,8 @@ import { useRouter } from "next/navigation";
 import { useAccount } from "wagmi";
 import { Skeleton } from "./ui/skeleton";
 
+import Image from "next/image";
+
 export default function Header() {
   const { login, authenticated, logout } = usePrivy();
   const { address, isConnecting } = useAccount();
@@ -27,12 +29,16 @@ export default function Header() {
   return (
     <header className="flex items-center justify-between p-4 border-b">
       <div className="flex items-center space-x-3">
-        <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
-          <span className="text-primary-foreground font-bold">P</span>
+        <div className="w-12 h-12 bg-primary rounded-lg flex items-center justify-center">
+          <Link href="/" className="text-xl font-bold">
+            <Image
+              src="/logo-cropped.png"
+              alt="Polytrader"
+              width={48}
+              height={48}
+            />
+          </Link>
         </div>
-        <Link href="/" className="text-xl font-bold">
-          Polytrader
-        </Link>
       </div>
 
       {isConnecting ? (

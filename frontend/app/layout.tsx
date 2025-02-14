@@ -7,7 +7,6 @@ import PrivyProvider from "@/components/providers/PrivyProvider";
 import Header from "@/components/header";
 import WagmiProviderWrapper from "@/components/providers/QueryClientWrapper";
 
-import { WagmiProvider } from "@privy-io/wagmi";
 import { headers } from "next/headers";
 import { cookieToInitialState } from "wagmi";
 

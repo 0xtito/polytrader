@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { withdrawFundsAction } from "@/lib/actions/agent/agent-actions";
 import { useAccount, useBalance, useWriteContract } from "wagmi";
-import { erc20Abi, formatEther, formatUnits, parseUnits } from "viem";
+import { erc20Abi, formatUnits, parseUnits } from "viem";
 import { useState, useEffect } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 
