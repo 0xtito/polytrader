@@ -14,10 +14,12 @@ import { AdvancedMarket } from "./getMarkets";
 interface MarketFilters {
   volumeMin: string;
   volume24hrMin: string;
-  sortBy: "volume" | "volume24hr" | "outcome";
+  sortBy: "volume" | "volume24hr" | "outcome" | "featured";
   sortOrder: "asc" | "desc";
   page: number;
   limit: number;
+  tagId: string;
+  featured: boolean;
 }
 
 /**
@@ -33,6 +35,8 @@ export async function getFilteredMarkets(filters: Partial<MarketFilters>) {
     sortOrder = "desc",
     page = 1,
     limit = 12,
+    tagId = undefined,
+    featured = false,
   } = filters;
 
   // We'll gather all markets from Gamma. We'll fetch in chunks using offset.
@@ -47,9 +51,9 @@ export async function getFilteredMarkets(filters: Partial<MarketFilters>) {
       archived: false,
       closed: false,
       active: true,
-      tagId: "1560",
+      tagId,
       relatedTags: true,
-      featured: true,
+      featured,
     });
 
     allMarkets.push(...markets);
@@ -115,6 +119,10 @@ export async function getFilteredMarkets(filters: Partial<MarketFilters>) {
       // so valA= aOutcomeDiff
       valA = aOutcomeDiff;
       valB = bOutcomeDiff;
+    } else if (sortBy === "featured") {
+      // Featured markets should be sorted first
+      valA = a.featured ? 1 : 0;
+      valB = b.featured ? 1 : 0;
     }
 
     // if ascending, sort valA < valB => -1

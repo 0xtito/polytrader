@@ -4,14 +4,12 @@
 import React, { useEffect, useState } from "react";
 import { format } from "date-fns";
 import { BarChart3Icon, TimerIcon, DollarSignIcon } from "lucide-react";
-import {
-  streamAgentAnalysis,
-  // writeStreamToFile,
-} from "@/lib/actions/agent/stream-agent-analysis";
+import { streamAgentAnalysis } from "@/lib/actions/agent/stream-agent-analysis";
 import { AgentEvent } from "@/types/agent-stream-types";
 import { handleInterrupt } from "@/lib/actions/agent/handle-interruption";
+import { AdvancedMarket, Outcome } from "@/lib/actions/polymarket/getMarkets";
 import StreamingAgentConsole from "./streaming-agent-console";
-import { AdvancedMarket } from "@/lib/actions/polymarket/getMarkets";
+
 interface MarketDetailClientProps {
   marketId: string;
   initialMarketData: AdvancedMarket;
@@ -225,7 +223,7 @@ export default function MarketDetailClient({
             <div className="rounded-xl border bg-card p-6">
               <h2 className="text-xl font-semibold mb-4">Current Prices</h2>
               <div className="space-y-4">
-                {market.outcomePrices.map((outcome: string, index: number) => (
+                {market.outcomes.map(({ outcome, price }, index: number) => (
                   <div
                     key={outcome}
                     className="flex items-center justify-between"
@@ -233,10 +231,7 @@ export default function MarketDetailClient({
                     <span className="font-medium">{outcome}</span>
                     <div className="flex items-center gap-2">
                       <span className="text-2xl font-bold">
-                        {(
-                          parseFloat(market.outcomePrices[index]) * 100
-                        ).toFixed(1)}
-                        %
+                        {(parseFloat(price) * 100).toFixed(1)}%
                       </span>
                     </div>
                   </div>

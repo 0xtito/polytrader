@@ -30,6 +30,10 @@ export function mapToFrontendMarkets(
         },
       ] as [Token, Token],
       outcomePrices: gm.outcomePrices,
+      outcomes: gm.outcomes.map((outcome) => ({
+        outcome: outcome,
+        price: gm.outcomePrices[gm.outcomes.indexOf(outcome)],
+      })),
       rewards: {
         min_size: 0,
         max_spread: 0,
@@ -60,5 +64,6 @@ export function mapToFrontendMarkets(
       volumeClob: gm.volumeClob,
       volume24hrAmm: gm.volume24hrAmm,
       liquidityClob: gm.liquidityClob,
+      featured: gm.featured,
     }));
 }

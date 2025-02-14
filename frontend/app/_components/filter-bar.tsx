@@ -24,7 +24,7 @@ type FilterBarProps = {
 export type FilterState = {
   volumeMin: string;
   volume24hrMin: string;
-  sortBy: "volume" | "volume24hr" | "outcome";
+  sortBy: "volume" | "volume24hr" | "outcome" | "featured";
   sortOrder: "asc" | "desc";
 };
 
@@ -88,6 +88,7 @@ export function FilterBar({ onFilterChange }: FilterBarProps) {
               <SelectItem value="volume">Volume</SelectItem>
               <SelectItem value="volume24hr">24h Volume</SelectItem>
               <SelectItem value="outcome">Outcome (50/50)</SelectItem>
+              <SelectItem value="featured">Featured</SelectItem>
             </SelectContent>
           </Select>
         </div>

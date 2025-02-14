@@ -38,13 +38,20 @@ export interface Market {
   fpmm: string;
 }
 
+export interface Outcome {
+  outcome: string;
+  price: string;
+}
+
 export interface AdvancedMarket extends Market {
+  outcomes: Outcome[];
   volume: string;
   volume24hrClob: number;
   volume24hrAmm: number;
   liquidity: string;
   liquidityClob: number;
   volumeClob: number;
+  featured: boolean;
 }
 
 interface MarketsResponse {

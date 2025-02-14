@@ -21,6 +21,7 @@ interface DashboardClientProps {
    * If passed, we show them initially until the user triggers a filter.
    */
   initialMarkets?: AdvancedMarket[];
+  tagId?: string;
 }
 
 /**
@@ -28,6 +29,7 @@ interface DashboardClientProps {
  */
 export default function DashboardClient({
   initialMarkets = [],
+  tagId,
 }: DashboardClientProps) {
   const [markets, setMarkets] = useState<AdvancedMarket[]>(initialMarkets);
   const [loading, setLoading] = useState(true);
@@ -75,6 +77,7 @@ export default function DashboardClient({
           ...filters,
           page: currentPage,
           limit: 12,
+          tagId,
         });
         setMarkets(res.markets);
         setTotalPages(res.totalPages);
