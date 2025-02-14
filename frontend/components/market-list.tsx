@@ -5,7 +5,7 @@
 
 import React from "react";
 import MarketCard from "./market-card";
-import { Market } from "@/lib/actions/getMarkets";
+import { Market } from "@/lib/actions/polymarket/getMarkets";
 
 interface MarketListProps {
   markets: Market[];

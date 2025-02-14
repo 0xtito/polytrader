@@ -3,8 +3,8 @@
 import React, { useEffect, useState } from "react";
 import MarketList from "@/components/market-list";
 import SortFilterBar from "@/components/sort-filter-bar";
-import { Market, Token } from "@/lib/actions/getMarkets";
-import { GammaMarket } from "@/lib/actions/get-gamma-markets";
+import { Market, Token } from "@/lib/actions/polymarket/getMarkets";
+import { GammaMarket } from "@/lib/actions/polymarket/get-gamma-markets";
 
 interface DashboardClientProps {
   initialMarkets: GammaMarket[];

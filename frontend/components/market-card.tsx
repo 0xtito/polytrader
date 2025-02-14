@@ -5,7 +5,7 @@
 
 import React from "react";
 import Link from "next/link";
-import { Market } from "@/lib/actions/getMarkets";
+import { Market } from "@/lib/actions/polymarket/getMarkets";
 import { format } from "date-fns";
 
 interface MarketCardProps {

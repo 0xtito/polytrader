@@ -34,6 +34,7 @@ interface StreamingAgentConsoleProps {
   isStreaming: boolean;
   streamOutput: string[];
   agentEvents: AgentEvent[];
+  onTradeConfirmation?: (decision: "YES" | "NO") => void;
 }
 
 /**
@@ -45,7 +46,10 @@ export default function StreamingAgentConsole({
   isStreaming,
   streamOutput,
   agentEvents,
+  onTradeConfirmation,
 }: StreamingAgentConsoleProps) {
+  const [showTradeConfirmation, setShowTradeConfirmation] = useState(false);
+  const [tradeToConfirm, setTradeToConfirm] = useState<TradeInfo | null>(null);
   const [metadata, setMetadata] = useState<{
     run_id: string;
     attempt: number;
@@ -86,6 +90,24 @@ export default function StreamingAgentConsole({
     }
   }, [agentEvents, showScrollButton, scrollToBottom]);
 
+  // Check for trade events that need confirmation
+  useEffect(() => {
+    const lastEvent = agentEvents[agentEvents.length - 1];
+    if (lastEvent?.name === "trade_agent" && lastEvent?.data?.trade_info) {
+      const tradeInfo = lastEvent.data.trade_info as TradeInfo;
+      if (tradeInfo.side !== "NO_TRADE") {
+        setTradeToConfirm(tradeInfo);
+        setShowTradeConfirmation(true);
+      }
+    }
+  }, [agentEvents]);
+
+  const handleTradeDecision = (decision: "YES" | "NO") => {
+    setShowTradeConfirmation(false);
+    setTradeToConfirm(null);
+    onTradeConfirmation?.(decision);
+  };
+
   return (
     <div className="w-full rounded-lg bg-white dark:bg-gray-800 shadow-lg p-6 space-y-6">
       <div className="flex items-center justify-between">
@@ -114,6 +136,51 @@ export default function StreamingAgentConsole({
       {!isStreaming && agentEvents.length === 0 && (
         <div className="text-center text-sm text-gray-500 dark:text-gray-400">
           No data yet
+        </div>
+      )}
+
+      {showTradeConfirmation && tradeToConfirm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-xl max-w-md w-full mx-4">
+            <h3 className="text-xl font-bold mb-4">Confirm Trade</h3>
+            <div className="space-y-4 mb-6">
+              <p className="text-gray-600 dark:text-gray-300">
+                Would you like to proceed with the following trade?
+              </p>
+              <div className="bg-gray-50 dark:bg-gray-900 p-4 rounded-lg space-y-2">
+                <p>
+                  <span className="font-semibold">Side:</span>{" "}
+                  {tradeToConfirm.side}
+                </p>
+                <p>
+                  <span className="font-semibold">Size:</span>{" "}
+                  {tradeToConfirm.size}
+                </p>
+                <p>
+                  <span className="font-semibold">Confidence:</span>{" "}
+                  {tradeToConfirm.confidence}
+                </p>
+                <p>
+                  <span className="font-semibold">Reason:</span>{" "}
+                  {tradeToConfirm.reason}
+                </p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-4">
+              <Button
+                variant="outline"
+                onClick={() => handleTradeDecision("NO")}
+              >
+                Reject
+              </Button>
+              <Button
+                onClick={() => handleTradeDecision("YES")}
+                className="bg-primary hover:bg-primary/90"
+              >
+                Accept
+              </Button>
+            </div>
+          </div>
         </div>
       )}
 

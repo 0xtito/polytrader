@@ -12,10 +12,11 @@ import {
 import {
   streamAgentAnalysis,
   writeStreamToFile,
-} from "@/lib/actions/stream-agent-analysis";
+} from "@/lib/actions/agent/stream-agent-analysis";
 import StreamingAgentConsole from "./streaming-agent-console";
-import { GammaMarket } from "@/lib/actions/get-gamma-markets";
+import { GammaMarket } from "@/lib/actions/polymarket/get-gamma-markets";
 import { AgentEvent } from "@/types/agent-stream-types";
+import { handleInterrupt } from "@/lib/actions/agent/handle-interruption";
 
 interface MarketDetailClientProps {
   marketId: string;
@@ -33,6 +34,7 @@ export default function MarketDetailClient({
   const [isStreaming, setIsStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [agentEvents, setAgentEvents] = useState<AgentEvent[]>([]);
+  const [streamConfig, setStreamConfig] = useState<any>(null);
 
   useEffect(() => {
     if (initialMarketData) {
@@ -47,7 +49,8 @@ export default function MarketDetailClient({
     const streamData: any[] = [];
 
     try {
-      const stream = await streamAgentAnalysis(parseInt(marketId));
+      const { stream, config } = await streamAgentAnalysis(parseInt(marketId));
+      setStreamConfig(config);
       let rawStreamData = [];
 
       // Keep track of successful reflections
@@ -101,12 +104,70 @@ export default function MarketDetailClient({
         setStreamOutput((prev) => [...prev]);
       }
 
+      if (rawStreamData[rawStreamData.length - 1].data.__interrupt__) {
+        console.log("Interrupt detected");
+        const lastChunk = rawStreamData[rawStreamData.length - 1];
+        setStreamOutput((prev) => [...prev]);
+        return;
+      }
+
       // Write stream data to file
       await writeStreamToFile(rawStreamData);
     } catch (err) {
       console.error("Streaming error:", err);
       setError(
         err instanceof Error ? err.message : "An error occurred while streaming"
+      );
+    } finally {
+      setIsStreaming(false);
+    }
+  };
+
+  const handleTradeConfirmation = async (decision: "YES" | "NO") => {
+    if (!streamConfig) {
+      console.error("No stream config available");
+      return;
+    }
+
+    setIsStreaming(true);
+    try {
+      const stream = await handleInterrupt(decision, streamConfig);
+      let rawStreamData = [];
+
+      for await (const chunk of stream) {
+        rawStreamData.push(chunk);
+
+        if (chunk.event === "metadata") continue;
+
+        if (chunk.event === "updates" && chunk.data) {
+          Object.entries(chunk.data).forEach(([eventName, eventData]) => {
+            const eventInfo = {
+              name: eventName,
+              data: eventData as Record<string, any>,
+              timestamp: new Date().toISOString(),
+            };
+
+            setAgentEvents((prev) => [
+              ...prev,
+              {
+                name: eventName,
+                data: eventData as Record<string, any>,
+              },
+            ]);
+          });
+        }
+
+        setStreamOutput((prev) => [...prev]);
+      }
+
+      // Write stream data to file
+      await writeStreamToFile(rawStreamData);
+    } catch (err) {
+      console.error("Error handling trade confirmation:", err);
+      setError(
+        err instanceof Error
+          ? err.message
+          : "An error occurred while processing trade confirmation"
       );
     } finally {
       setIsStreaming(false);
@@ -290,6 +351,7 @@ export default function MarketDetailClient({
                 streamOutput={streamOutput}
                 isStreaming={isStreaming}
                 agentEvents={agentEvents}
+                onTradeConfirmation={handleTradeConfirmation}
               />
             )}
           </div>
