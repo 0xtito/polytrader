@@ -17,6 +17,23 @@ import {
 } from "@/components/ui/select";
 import { Card } from "@/components/ui/card";
 
+// Add tags array
+const MARKET_TAGS = [
+  { id: "all", label: "All Tags" }, // Default option
+  { id: "100150", label: "Memecoins" },
+  { id: "100196", label: "Fed Rates" },
+  { id: "100265", label: "Geopolitics" },
+  { id: "100335", label: "Trending Markets" },
+  { id: "198", label: "Breaking News" },
+  { id: "235", label: "Bitcoin" },
+  { id: "24", label: "USA Election" },
+  { id: "439", label: "AI" },
+  { id: "53", label: "Movies" },
+  { id: "136", label: "Airdrops" },
+  { id: "1312", label: "Crypto Prices" },
+  { id: "1597", label: "Global Elections" },
+].sort((a, b) => a.label.localeCompare(b.label)); // Sort alphabetically
+
 type FilterBarProps = {
   onFilterChange: (filters: FilterState) => void;
 };
@@ -26,6 +43,7 @@ export type FilterState = {
   volume24hrMin: string;
   sortBy: "volume" | "volume24hr" | "outcome" | "featured";
   sortOrder: "asc" | "desc";
+  tagId: string; // Add tagId to FilterState
 };
 
 export function FilterBar({ onFilterChange }: FilterBarProps) {
@@ -34,6 +52,7 @@ export function FilterBar({ onFilterChange }: FilterBarProps) {
     volume24hrMin: "",
     sortBy: "volume",
     sortOrder: "desc",
+    tagId: "all", // Default to "all" tags
   });
 
   const handleChange = (key: keyof FilterState, value: string) => {
@@ -44,7 +63,7 @@ export function FilterBar({ onFilterChange }: FilterBarProps) {
 
   return (
     <Card className="p-6 bg-card/50 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
         <div className="space-y-2">
           <Label htmlFor="volumeMin" className="text-sm font-medium">
             Min Volume
@@ -109,6 +128,27 @@ export function FilterBar({ onFilterChange }: FilterBarProps) {
             <SelectContent>
               <SelectItem value="asc">Ascending</SelectItem>
               <SelectItem value="desc">Descending</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="tagId" className="text-sm font-medium">
+            Filter by Tag
+          </Label>
+          <Select
+            value={filters.tagId}
+            onValueChange={(value) => handleChange("tagId", value)}
+          >
+            <SelectTrigger id="tagId" className="w-full bg-background/50">
+              <SelectValue placeholder="Select tag" />
+            </SelectTrigger>
+            <SelectContent>
+              {MARKET_TAGS.map((tag) => (
+                <SelectItem key={tag.id} value={tag.id}>
+                  {tag.label}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
         </div>

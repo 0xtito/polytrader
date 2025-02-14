@@ -44,6 +44,7 @@ export default function DashboardClient({
     volume24hrMin: "",
     sortBy: "volume",
     sortOrder: "desc",
+    tagId: "all",
   });
 
   // to handle transitions smoothly
@@ -77,7 +78,7 @@ export default function DashboardClient({
           ...filters,
           page: currentPage,
           limit: 12,
-          tagId,
+          tagId: filters.tagId === "all" ? undefined : filters.tagId,
         });
         setMarkets(res.markets);
         setTotalPages(res.totalPages);
