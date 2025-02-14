@@ -20,6 +20,7 @@ from langchain_core.messages import ToolMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import StateGraph
 from langgraph.prebuilt import ToolNode
+from langgraph.types import interrupt, Command
 from pydantic import BaseModel, Field
 from langgraph.checkpoint.memory import MemorySaver
 
@@ -709,10 +710,6 @@ async def trade_agent_node(
                     "type": "string",
                     "description": "The market ID for which the trade is being made (as a string)."
                 },
-                "token_id": {
-                    "type": "string",
-                    "description": "The token ID that the user should trade or hold (as a string)."
-                },
                 "size": {
                     "type": "number",
                     "description": (
@@ -739,7 +736,6 @@ async def trade_agent_node(
             "required": [
                 "side",
                 "market_id",
-                "token_id",
                 "size",
                 "reason",
                 "confidence"
@@ -759,6 +755,15 @@ Available Information:
 5. User's Available Funds for a new position: {state.available_funds}
 
 You MAY ONLY choose 'side' from this list: {possible_sides}.
+
+If all of the values are not filled, you must fill them by using the tools at your disposal.
+
+Required Fields:
+- side: Must be one of {possible_sides}
+- market_id: Must be a string
+- size: Must be a number
+- reason: Must be a non-empty string with clear reasoning
+- confidence: Must be a number between 0 and 1
 
 If the user does not hold any position in this market, you may NOT choose SELL. 
 You can either buy or do no trade.
@@ -829,7 +834,6 @@ async def reflect_on_trade_node(
         "reason": lambda x: isinstance(x, str) and len(x) > 0,
         "confidence": lambda x: isinstance(x, (int, float)) and 0 <= float(x) <= 1,
         "market_id": lambda x: isinstance(x, str),
-        "token_id": lambda x: isinstance(x, str),
         "size": lambda x: isinstance(x, (int, float))
     }
 
@@ -838,7 +842,6 @@ async def reflect_on_trade_node(
 Required Fields:
 - side: Must be one of "BUY", "SELL", "NO_TRADE"
 - market_id: Must be a string
-- token_id: Must be a string
 - size: Must be a number
 - reason: Must be a non-empty string with clear reasoning
 - confidence: Must be a number between 0 and 1
@@ -898,11 +901,30 @@ Should this trade decision be accepted as final?"""
             if size_val is not None and size_val > state.available_funds:
                 is_valid = False
                 validation_errors.append(f"Cannot BUY with size {size_val} exceeding available funds {state.available_funds}.")
-        if side_val == "SELL":
-            token_val = trade_info.get("token_id", "")
-            if not state.positions or state.positions.get(token_val, 0) <= 0:
+
+            token_ids = state.market_data.get("clobTokenIds")
+            if not token_ids:
                 is_valid = False
-                validation_errors.append(f"Cannot SELL token {token_val} if user holds no position in it.")
+                validation_errors.append("No token ID found in market data")
+            
+            buy_token_id = token_ids[1]
+
+            state.trade_info["token_id"] = buy_token_id
+            
+        if side_val == "SELL":
+            # token_val = trade_info.get("token_id", "")
+            token_ids = state.market_data.get("clobTokenIds")
+            if not token_ids:
+                is_valid = False
+                validation_errors.append("No token ID found in market data")
+            
+            sell_token_id = token_ids[0]
+
+            state.trade_info["token_id"] = sell_token_id
+
+            if not state.positions or state.positions.get(sell_token_id, 0) <= 0:
+                is_valid = False
+                validation_errors.append(f"Cannot SELL token {sell_token_id} if user holds no position in it.")
     else:
         is_valid = False
         validation_errors.append("No trade decision provided")
@@ -941,6 +963,141 @@ Should this trade decision be accepted as final?"""
             ],
             "decision": "trade_more"
         }
+    
+async def save_trade_info_node(
+    state: State,
+    *,
+    config: Optional[RunnableConfig] = None
+) -> Dict[str, Any]:
+    """Save the trade info to the database."""
+    return {
+        "messages": [],
+        "decision": "end"
+    }
+
+###############################################################################
+# Node: Human Confirmation
+###############################################################################
+async def human_confirmation_node(
+    state: State,
+    *,
+    config: Optional[RunnableConfig] = None
+) -> Command[Literal["process_human_input", "__end__"]]:
+    """
+    This node waits for human confirmation before executing a trade.
+    It only runs if the trade decision is BUY or SELL.
+    """
+    if not state.trade_info or state.trade_decision == "NO_TRADE":
+        return {
+            "messages": [],
+            "decision": "end"
+        }
+    
+    llm_output = f"""
+    Trade Decision Summary:
+    ----------------------
+    Side: {state.trade_info.get('side')}
+    Market ID: {state.trade_info.get('market_id')}
+    Token ID: {state.trade_info.get('token_id')}
+    Size: {state.trade_info.get('size')}
+    Confidence: {state.trade_info.get('confidence')}
+
+    Reasoning: {state.trade_info.get('reason')}
+
+    Market Analysis: {state.trade_info.get('trade_evaluation_of_market_data')}
+    """
+    
+    make_purchase = interrupt(
+        {
+        "question": "Do you want to proceed with this trade?",
+        "llm_output": llm_output
+        }
+    )
+
+    print("make_purchase: ", make_purchase)
+    print("make_purchase['value']: ", make_purchase["value"])
+    
+    if make_purchase["value"] == "true":
+        return Command(goto="process_human_input", update={"user_confirmation": True}) 
+    else:
+        return Command(goto="__end__", update={"user_confirmation": False})
+    
+
+async def human_confirmation_node_js(
+    state: State,
+    *,
+    config: Optional[RunnableConfig] = None
+) -> Dict[str, Any]:
+    """
+    We are doing nothing in this node because the langgraph JS SDK does not support interrupting the graph.
+    Thus, we are updating the state from the web app using the JS SDK.
+    """
+    pass
+
+async def process_human_input_node(
+    state: State,
+    *,
+    config: Optional[RunnableConfig] = None
+) -> Dict[str, Any]:
+    """Process the human's response to the trade confirmation."""
+    print("INSIDE PROCESS HUMAN INPUT NODE")
+
+    if state.user_confirmation:
+        # Execute the trade
+        try:
+
+            condition_id = state.market_data.get("condition_id")
+
+            # Get trade parameters from state
+            side = state.trade_info.get("side")
+            token_id = state.trade_info.get("token_id")
+            size = state.trade_info.get("size")
+
+            print("condition_id: ", condition_id)
+            print("side: ", side)
+            print("token_id: ", token_id)
+            print("size: ", size)
+
+            # Create and execute the order
+            if not state.debug:
+                order_response = poly_client.execute_market_order(
+                    token_id=token_id,
+                    amount=4,
+                    side=side
+                )
+
+                print("Order response: ", order_response)
+            else:
+                print("DEBUG MODE: WOULD HAVE TRADED")
+                
+
+            # Order response: {'errorMsg': '', 'orderID': '0x68ffde92fee75d32b10f002e5a25f9773dca93c6fd90ec42f086c40962a1a02d', 'takingAmount': '11.764704', 'makingAmount': '3.999999', 'status': 'matched', 'transactionsHashes': ['0x8b849971fa5ac0402257f028b166c4c4eeacbdfff980d0957ee4d522db29e087'], 'success': True}
+
+
+            
+            return {
+                "messages": [AIMessage(content=f"Trade executed successfully! Order response: {order_response}")],
+                "decision": "end"
+            }
+        except Exception as e:
+            return {
+                "messages": [AIMessage(content=f"Failed to execute trade: {str(e)}")],
+                "decision": "end"
+            }
+    else:
+        return {
+            "messages": [AIMessage(content="Trade cancelled by user.")],
+            "decision": "end"
+        }
+
+# def route_after_human_confirmation(state: State) -> Literal["process_human_input", "__end__"]:
+#     """Route after human confirmation node."""
+#     last_message = state.messages[-1] if state.messages else None
+    
+#     if not isinstance(last_message, HumanMessage):
+#         return "__end__"
+#    
+#     return "process_human_input"
 
 ###############################################################################
 # Routing
@@ -1035,13 +1192,19 @@ def route_after_trade(state: State) -> Literal["trade_agent", "reflect_on_trade"
     else:
         return "trade_tools"
 
-def route_after_reflect_on_trade(state: State, *, config: Optional[RunnableConfig] = None) -> Literal["trade_agent", "__end__"]:
+def route_after_reflect_on_trade(state: State, *, config: Optional[RunnableConfig] = None) -> Literal["trade_agent", "human_confirmation", "human_confirmation_js", "__end__"]:
     """After reflection, either end the workflow or request a new trade decision."""
     configuration = Configuration.from_runnable_config(config)
 
     last_msg = state.messages[-1] if state.messages else None
     if not isinstance(last_msg, ToolMessage):
         return "trade_agent"
+    
+    if state.trade_info.get("side") in ["BUY", "SELL"]:
+        if state.from_js:
+            return "human_confirmation_js"
+        else:
+            return "human_confirmation"
     
     # If validation was successful, end the workflow
     if last_msg.status == "success":
@@ -1053,6 +1216,13 @@ def route_after_reflect_on_trade(state: State, *, config: Optional[RunnableConfi
     
     # Otherwise, try one more trade decision
     return "trade_agent"
+
+def route_after_human_confirmation_js(state: State) -> Literal["process_human_input", "__end__"]:
+    """Route after human confirmation node."""
+    if state.user_confirmation:
+        return "process_human_input"
+    else:
+        return "__end__"
 
 ###############################################################################
 # Construct the Graph
@@ -1099,6 +1269,17 @@ workflow.add_node("reflect_on_trade", reflect_on_trade_node)
 workflow.add_edge("trade_tools", "trade_agent")
 workflow.add_conditional_edges("trade_agent", route_after_trade)
 workflow.add_conditional_edges("reflect_on_trade", route_after_reflect_on_trade)
+
+# Update the routing after reflect_on_trade
+workflow.add_node("human_confirmation", human_confirmation_node)
+workflow.add_node("human_confirmation_js", human_confirmation_node_js)
+workflow.add_node("process_human_input", process_human_input_node)
+
+workflow.add_conditional_edges("human_confirmation_js", route_after_human_confirmation_js)
+
+# workflow.add_edge("reflect_on_trade", "human_confirmation")
+# workflow.add_conditional_edges("human_confirmation", route_after_human_confirmation)
+workflow.add_edge("process_human_input", "__end__")
 
 # Set up memory
 # memory = MemorySaver()

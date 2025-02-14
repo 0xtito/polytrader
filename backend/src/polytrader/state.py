@@ -61,6 +61,11 @@ class InputState:
     Default is 10.0 if not provided.
     """
 
+    from_js: Optional[bool] = False 
+    """
+    Whether the graph is being run from the web app using js.
+    """
+
 
 @dataclass(kw_only=True)
 class State(InputState):
@@ -71,6 +76,7 @@ class State(InputState):
     market_data: Optional[dict[str, Any]] = None
     research_report: Optional[dict[str, Any]] = None
     trade_decision: Optional[str] = None
+    user_confirmation: Optional[bool] = None  # Track user confirmation for trades
 
     # Additional fields for storing agent outputs
     analysis_info: Optional[dict[str, Any]] = None

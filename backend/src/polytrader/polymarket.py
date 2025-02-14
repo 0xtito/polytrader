@@ -12,6 +12,7 @@ from typing import Any
 import httpx
 from dotenv import load_dotenv
 from py_clob_client.client import ClobClient
+from py_order_utils.model import POLY_PROXY, POLY_GNOSIS_SAFE
 from py_clob_client.clob_types import (
     ApiCreds,
     MarketOrderArgs,
@@ -35,6 +36,7 @@ load_dotenv()
 
 class Polymarket:
     """Polymarket client that interacts with CLOB and gamma APIs."""
+    credentials: ApiCreds
 
     def __init__(self) -> None:
         """Initialize Polymarket client with default config."""
@@ -46,7 +48,7 @@ class Polymarket:
         self.clob_auth_endpoint = self.clob_url + "/auth/api-key"
 
         self.chain_id = 137  # POLYGON
-        self.private_key = os.getenv("POLYGON_WALLET_PRIVATE_KEY")
+        self.private_key = os.getenv("POLYMARKET_PRIVATE_KEY")
         self.polygon_rpc = "https://polygon-rpc.com"
         self.w3 = Web3(Web3.HTTPProvider(self.polygon_rpc))
 
@@ -74,11 +76,24 @@ class Polymarket:
 
     def _init_api_keys(self) -> None:
         """Initialize or derive API credentials for the Polymarket CLOB."""
+
+        proxy_address = os.getenv("POLYMARKET_PROXY_ADDRESS")
+
+        if not proxy_address:
+            raise ValueError("POLYMARKET_PROXY_ADDRESS is not set")
+
         self.client = ClobClient(
-            self.clob_url, key=self.private_key, chain_id=self.chain_id
+            host=self.clob_url, 
+            key=self.private_key, 
+            chain_id=self.chain_id,
+            funder=proxy_address,
+            signature_type=POLY_GNOSIS_SAFE
         )
+
         self.credentials = self.client.create_or_derive_api_creds()
+
         self.client.set_api_creds(self.credentials)
+
         print(self.credentials)  # T201 left in place
 
     def _init_approvals(self, run: bool = False) -> None:
@@ -369,13 +384,13 @@ class Polymarket:
             OrderArgs(price=price, size=size, side=side, token_id=token_id)
         )
 
-    def execute_market_order(self, market, amount) -> str:
+    def execute_market_order(self, token_id, amount, side) -> str:
         """Execute a market order for the given amount on a provided market."""
-        print("Execute market order... signed_order ", market)  # T201 left
-        token_id = ast.literal_eval(market[0].dict()["metadata"]["clob_token_ids"])[1]
+        print("Execute market order... signed_order ", token_id)  # T201 left
         order_args = MarketOrderArgs(
             token_id=token_id,
             amount=amount,
+            side=side
         )
         signed_order = self.client.create_market_order(order_args)
         print(signed_order)  # T201 left

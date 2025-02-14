@@ -508,6 +508,22 @@ async def trade(
 
     return trade_decision
 
+class GetTokenIdParam(BaseModel):
+    condition_id: str
+    side: str
+
+async def get_token_id(
+    params: GetTokenIdParam,
+    *,
+    state: Annotated[State, InjectedState],
+    config: Annotated[RunnableConfig, InjectedToolArg]
+) -> Dict[str, Any]:
+    """Get the token ID for the given market ID and side."""
+    logger.info(f"Getting token ID for market_id={params.market_id}, side={params.side}")
+
+    # Get the token ID
+    token_id = await poly_client.get_market(params.condition_id, params.side)
+    return token_id
 ################################################################################
 # Utility for calling agent with tools (kept for reference, not always used)
 ################################################################################
