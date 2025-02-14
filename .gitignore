@@ -1,0 +1,21 @@
+.env
+*.env
+
+.cursorrules
+
+# backend
+backend/polytrader-env
+backend/build
+.venv
+.pytest_cache
+__pycache__
+.ruff_cache
+polytrader.egg-info
+.langgraph_api
+data
+
+# /frontend
+.next
+node_modules
+
+todo.md
