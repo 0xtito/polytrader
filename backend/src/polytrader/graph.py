@@ -28,7 +28,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from polytrader.configuration import Configuration
 from polytrader.gamma import GammaMarketClient
 from polytrader.polymarket import Polymarket
-from polytrader.state import InputState, OutputState, ResearchResult, State
+from polytrader.state import InputState, OutputState, ResearchResult, State, Token, TradeDecision
 from polytrader.tools import (
     analysis_get_external_news,
     analysis_get_market_trades,
@@ -38,8 +38,7 @@ from polytrader.tools import (
     analysis_get_market_details,
     analysis_get_multi_level_orderbook,
     analysis_get_historical_trends,
-    call_agent_with_tools,
-    deep_research  # <- IMPORT OUR NEW TOOL
+    deep_research 
 )
 from polytrader.utils import init_model
 
@@ -76,14 +75,35 @@ async def fetch_market_data(state: State) -> Dict[str, Any]:
             market_json["id"] = str(market_json["id"])
         if "clobTokenIds" in market_json:
             market_json["clobTokenIds"] = [str(tid) for tid in json.loads(market_json["clobTokenIds"])]
+
+        if not state.tokens:
+            print("SETTING TOKENS")
+            # Parse outcomes from JSON string if needed
+            outcomes = json.loads(market_json["outcomes"]) if isinstance(market_json["outcomes"], str) else market_json["outcomes"]
+            clob_token_ids = market_json["clobTokenIds"]
             
+            print("outcomes: ", outcomes)
+            print("clobTokenIds: ", clob_token_ids)
+            
+            # Create Token objects with proper YES/NO outcomes
+            tokens: List[Token] = []
+            for token_id, outcome in zip(clob_token_ids, outcomes):
+                # Normalize outcome to YES/NO format
+                normalized_outcome = "YES" if outcome.lower() == "yes" else "NO"
+                tokens.append(Token(token_id=token_id, outcome=normalized_outcome))
+            
+            print("TOKENS: ", tokens)
+            state.tokens = tokens
+        else: 
+            print("TOKENS ALREADY SET")
+
         state.market_data = market_json  # raw dict
         print("Raw market data as json:")
-        print(json.dumps(market_json, indent=2))
         return {
             "messages": [f"Fetched market data for ID={market_id}."],
             "proceed": True,
             "market_data": market_json,
+            "tokens": tokens
         }
     except ValueError as e:
         return {
@@ -115,7 +135,7 @@ async def research_agent_node(
 
     research_report = None
 
-    if isinstance(last_message, ToolMessage):
+    if isinstance(last_message, ToolMessage) and last_message.name == "deep_research":
         print("IS TOOL MESSAGE")
         print(last_message)
         try:
@@ -136,14 +156,15 @@ async def research_agent_node(
                     research_report = ResearchResult(**content_dict)
                 except json.JSONDecodeError:
                     print("Could not parse research report content as JSON")
-                    return {
-                        "messages": [last_message],
-                        "research_report": None,
-                        "loop_step": state.loop_step + 1,
-                    }
+                    # return {
+                    #     "messages": [last_message],
+                    #     "research_report": None,
+                    #     "loop_step": state.loop_step + 1,
+                    # }
 
             # Update state with the ResearchResult
-            state.research_report = research_report.model_dump()
+            if research_report:
+                state.research_report = research_report.model_dump()
 
             last_ai_message = state.messages[-2]
 
@@ -232,8 +253,10 @@ async def reflect_on_research_node(
     market_data_str = json.dumps(state.market_data or {}, indent=2)
     system_text = """You are evaluating the quality of web research gathered about a market.
 Your role is to determine if the research is sufficient to proceed with market analysis.
+
+The research report is meant to help answer the question: <question>{state.market_data.get("question", "")}</question>.
 """
-    system_msg = SystemMessage(content=f"{system_text}\n\nMarket data:\n{market_data_str}")
+    system_msg = SystemMessage(content=system_text)
 
     # Create messages list
     messages = [system_msg] + state.messages[:-1]
@@ -268,9 +291,9 @@ Sources:
     bound_model = raw_model.with_structured_output(InfoIsSatisfactory)
     response = cast(InfoIsSatisfactory, await bound_model.ainvoke(messages))
 
-    print("RESPONSE: ", response)
+    print("REFLECT ON RESEARCH RESPONSE: ", response)
 
-    if response.is_satisfactory and research_result:
+    if response.is_satisfactory:
         return {
             "research_report": research_result,
             "messages": [
@@ -696,6 +719,7 @@ async def trade_agent_node(
         "description": (
             "Call this when you have made your final trade decision. "
             f"You may only set 'side' to one of {possible_sides}. "
+            "For binary markets, you must also specify which outcome (YES/NO) you want to trade. "
             "This will record your decision and reasoning."
         ),
         "parameters": {
@@ -705,6 +729,15 @@ async def trade_agent_node(
                     "type": "string",
                     "description": f"Your trading side. Must be one of: {possible_sides}",
                     "enum": possible_sides
+                },
+                "outcome": {
+                    "type": "string",
+                    "description": "For binary markets, specify which outcome to trade: YES or NO",
+                    "enum": ["YES", "NO"]
+                },
+                "token_id": {
+                    "type": "string",
+                    "description": "The token ID for which the trade is being made (as a string)."
                 },
                 "market_id": {
                     "type": "string",
@@ -738,7 +771,9 @@ async def trade_agent_node(
                 "market_id",
                 "size",
                 "reason",
-                "confidence"
+                "confidence",
+                "outcome",
+                "token_id"
             ]
         }
     }
@@ -753,13 +788,16 @@ Available Information:
 3. Analysis Info: {json.dumps(state.analysis_info or {}, indent=2)}
 4. User Positions (for this or related markets): {json.dumps(state.positions or {}, indent=2)}
 5. User's Available Funds for a new position: {state.available_funds}
+6. Market Tokens: {[{"token_id": t.token_id, "outcome": t.outcome} for t in state.tokens] if state.tokens else []}
 
 You MAY ONLY choose 'side' from this list: {possible_sides}.
+For binary markets, you MUST specify which outcome (YES/NO) you want to trade.
 
 If all of the values are not filled, you must fill them by using the tools at your disposal.
 
 Required Fields:
 - side: Must be one of {possible_sides}
+- outcome: Must be either "YES" or "NO" for binary markets
 - market_id: Must be a string
 - size: Must be a number
 - reason: Must be a non-empty string with clear reasoning
@@ -774,6 +812,9 @@ Be sure to respect the user's 'available_funds' if you recommend buying.
 Do not propose a trade that exceeds these available funds.
 
 When you have finalized your decision, call the TradeDecision tool exactly once.
+
+Remember to be explicit about which outcome (YES/NO) you want to trade when making a decision.
+Your reasoning should clearly explain why you chose that particular outcome.
 """
 
     messages = [HumanMessage(content=system_text)] + state.messages
@@ -795,7 +836,16 @@ When you have finalized your decision, call the TradeDecision tool exactly once.
             response.tool_calls = [tc for tc in response.tool_calls if tc["name"] == "TradeDecision"]
             # Store the trade info in state
             state.trade_info = trade_info
-            state.trade_decision = trade_info.get("side")
+            # Create and store TradeDecision object
+            try:
+                trade_decision_obj = TradeDecision(
+                    side=trade_info.get("side"),
+                    outcome=trade_info.get("outcome")
+                )
+                state.trade_decision = trade_decision_obj
+            except ValueError as e:
+                print(f"Invalid trade decision: {str(e)}")
+                state.trade_decision = None
             state.confidence = float(trade_info.get("confidence", 0))
 
     new_messages: List[BaseMessage] = [response]
@@ -834,22 +884,29 @@ async def reflect_on_trade_node(
         "reason": lambda x: isinstance(x, str) and len(x) > 0,
         "confidence": lambda x: isinstance(x, (int, float)) and 0 <= float(x) <= 1,
         "market_id": lambda x: isinstance(x, str),
-        "size": lambda x: isinstance(x, (int, float))
+        "size": lambda x: isinstance(x, (int, float)),
+        "outcome": lambda x: x in ["YES", "NO"] if x is not None else True  # Allow None only for NO_TRADE
     }
 
     system_text = """You are validating a trade decision. Your task is to ensure the decision is complete and properly formatted.
 
 Required Fields:
 - side: Must be one of "BUY", "SELL", "NO_TRADE"
+- outcome: Must be "YES" or "NO" for binary markets when side is BUY or SELL
 - market_id: Must be a string
 - size: Must be a number
 - reason: Must be a non-empty string with clear reasoning
 - confidence: Must be a number between 0 and 1
 
 The decision should be clear, well-reasoned, and based on the available market data and analysis.
-If side=NO_TRADE, size can be 0.
+If side=NO_TRADE, size can be 0 and outcome can be omitted.
 If side=BUY, size must not exceed available funds.
 If side=SELL, user must have a position in the market (though the LLM check is partial).
+
+For binary markets:
+1. The outcome must be specified as either YES or NO when buying or selling
+2. The token_id must match the specified outcome
+3. The reasoning must clearly explain why that specific outcome was chosen
 """
     system_msg = SystemMessage(content=system_text)
 
@@ -885,46 +942,57 @@ Should this trade decision be accepted as final?"""
     if trade_info:
         for field, validator in required_fields.items():
             value = trade_info.get(field)
+            if field == "outcome" and trade_info.get("side") == "NO_TRADE":
+                continue  # Skip outcome validation for NO_TRADE
             if value is None:
                 is_valid = False
                 validation_errors.append(f"Missing required field: {field}")
             elif not validator(value):
                 is_valid = False
                 validation_errors.append(f"Invalid value for {field}: {value}")
+
         # Additional checks
         side_val = trade_info.get("side", "")
         size_val = trade_info.get("size", 0)
+        outcome_val = trade_info.get("outcome")
+
         if side_val == "NO_TRADE" and size_val != 0:
             is_valid = False
             validation_errors.append("If side=NO_TRADE, size must be 0.")
+
+        if side_val in ["BUY", "SELL"]:
+            # Validate outcome is specified for binary markets
+            if not outcome_val:
+                is_valid = False
+                validation_errors.append("Must specify YES or NO outcome when buying or selling.")
+
+            # Find the correct token based on the outcome
+            if state.tokens and outcome_val:
+                token = next((t for t in state.tokens if t.outcome == outcome_val), None)
+                if not token:
+                    is_valid = False
+                    validation_errors.append(f"No token found for outcome: {outcome_val}")
+                else:
+                    # Store the token_id in trade_info
+                    state.trade_info["token_id"] = token.token_id
+
         if side_val == "BUY":
             if size_val is not None and size_val > state.available_funds:
                 is_valid = False
                 validation_errors.append(f"Cannot BUY with size {size_val} exceeding available funds {state.available_funds}.")
-
-            token_ids = state.market_data.get("clobTokenIds")
-            if not token_ids:
-                is_valid = False
-                validation_errors.append("No token ID found in market data")
-            
-            buy_token_id = token_ids[1]
-
-            state.trade_info["token_id"] = buy_token_id
             
         if side_val == "SELL":
-            # token_val = trade_info.get("token_id", "")
-            token_ids = state.market_data.get("clobTokenIds")
-            if not token_ids:
-                is_valid = False
-                validation_errors.append("No token ID found in market data")
-            
-            sell_token_id = token_ids[0]
+            if state.tokens and outcome_val:
+                token = next((t for t in state.tokens if t.outcome == outcome_val), None)
+                if token:
+                    position_size = state.positions.get(token.token_id, 0)
+                    if position_size <= 0:
+                        is_valid = False
+                        validation_errors.append(f"Cannot SELL {outcome_val} token - no position held.")
+                    elif size_val > position_size:
+                        is_valid = False
+                        validation_errors.append(f"Cannot SELL {size_val} {outcome_val} tokens - only have {position_size}.")
 
-            state.trade_info["token_id"] = sell_token_id
-
-            if not state.positions or state.positions.get(sell_token_id, 0) <= 0:
-                is_valid = False
-                validation_errors.append(f"Cannot SELL token {sell_token_id} if user holds no position in it.")
     else:
         is_valid = False
         validation_errors.append("No trade decision provided")
@@ -1067,18 +1135,21 @@ async def process_human_input_node(
                 )
 
                 print("Order response: ", order_response)
+
+                return {
+                    "messages": [AIMessage(content=f"Trade executed successfully! Order response: {order_response}")],
+                    "order_response": order_response,
+                    "trade_info": state.trade_info,
+                    "decision": "end"
+                }
             else:
                 print("DEBUG MODE: WOULD HAVE TRADED")
-                
-
-            # Order response: {'errorMsg': '', 'orderID': '0x68ffde92fee75d32b10f002e5a25f9773dca93c6fd90ec42f086c40962a1a02d', 'takingAmount': '11.764704', 'makingAmount': '3.999999', 'status': 'matched', 'transactionsHashes': ['0x8b849971fa5ac0402257f028b166c4c4eeacbdfff980d0957ee4d522db29e087'], 'success': True}
-
-
-            
-            return {
-                "messages": [AIMessage(content=f"Trade executed successfully! Order response: {order_response}")],
-                "decision": "end"
-            }
+                return {
+                    "messages": [AIMessage(content=f"DEBUG MODE: WOULD HAVE TRADED")],
+                    "order_response": None,
+                    "trade_info": state.trade_info,
+                    "decision": "end"
+                }
         except Exception as e:
             return {
                 "messages": [AIMessage(content=f"Failed to execute trade: {str(e)}")],
@@ -1089,15 +1160,6 @@ async def process_human_input_node(
             "messages": [AIMessage(content="Trade cancelled by user.")],
             "decision": "end"
         }
-
-# def route_after_human_confirmation(state: State) -> Literal["process_human_input", "__end__"]:
-#     """Route after human confirmation node."""
-#     last_message = state.messages[-1] if state.messages else None
-    
-#     if not isinstance(last_message, HumanMessage):
-#         return "__end__"
-#    
-#     return "process_human_input"
 
 ###############################################################################
 # Routing
@@ -1236,8 +1298,6 @@ workflow.add_conditional_edges("fetch_market_data", route_after_fetch)
 
 # Research 
 workflow.add_node("research_tools", ToolNode([
-    # search_exa,
-    # search_tavily
     deep_research
 ]))
 workflow.add_node("research_agent", research_agent_node)
@@ -1277,14 +1337,12 @@ workflow.add_node("process_human_input", process_human_input_node)
 
 workflow.add_conditional_edges("human_confirmation_js", route_after_human_confirmation_js)
 
-# workflow.add_edge("reflect_on_trade", "human_confirmation")
-# workflow.add_conditional_edges("human_confirmation", route_after_human_confirmation)
 workflow.add_edge("process_human_input", "__end__")
 
 # Set up memory
-# memory = MemorySaver()
+memory = MemorySaver()
 
 # Compile
-# graph = workflow.compile(checkpointer=memory)
-graph = workflow.compile()
+graph = workflow.compile(checkpointer=memory)
+# graph = workflow.compile()
 graph.name = "PolymarketAgent"

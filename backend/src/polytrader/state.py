@@ -5,12 +5,10 @@
 
 """Define states for Polymarket agent workflow."""
 from dataclasses import dataclass, field
-from typing import Annotated, Any, List, Optional, Dict, Union
-
+from typing import Annotated, Any, List, Optional, Dict, Union, Literal
+from pydantic import BaseModel, Field, field_validator
 from langchain.schema import BaseMessage
 from langgraph.graph import add_messages
-
-from pydantic import BaseModel, Field
 
 
 class ResearchResult(BaseModel):
@@ -27,13 +25,49 @@ class ResearchResult(BaseModel):
     #         "visited_urls": self.visited_urls
     #     }
 
+class Token(BaseModel):
+    """A token in the market."""
+    token_id: str
+    """The token id of the token."""
+    outcome: str
+    """The outcome of the token."""
+
+class TradeDecision(BaseModel):
+    """Represents a trade decision for a binary market."""
+    side: Literal["BUY", "SELL", "NO_TRADE"]
+    """The side of the trade (BUY/SELL/NO_TRADE)."""
+    outcome: Optional[str] = Field(
+        None,
+        description="The outcome to trade (YES/NO). Required for BUY/SELL, optional for NO_TRADE."
+    )
+    """The outcome to trade (YES/NO). Required for BUY/SELL, optional for NO_TRADE."""
+
+    @field_validator('outcome')
+    @classmethod
+    def validate_outcome(cls, v: Optional[str], info) -> Optional[str]:
+        """Validate that outcome is present for BUY/SELL and is YES/NO."""
+        side = info.data.get('side')
+        if side in ["BUY", "SELL"]:
+            if not v:
+                raise ValueError("Outcome is required for BUY/SELL trades")
+            if v not in ["YES", "NO"]:
+                raise ValueError("Outcome must be either YES or NO")
+        return v
+
+    def __str__(self) -> str:
+        """String representation of the trade decision."""
+        if self.side == "NO_TRADE":
+            return "NO_TRADE"
+        return f"{self.side}_{self.outcome}"
 
 @dataclass(kw_only=True)
 class InputState:
     """Defines initial input to the graph."""
 
     market_id: str  # Changed from int to str to handle large numbers safely
+    """The market id of the market."""
     custom_instructions: Optional[str] = None
+    """Custom instructions for the agent."""
     extraction_schema: dict[str, Any] = field(
         default_factory=lambda: {"headline": "", "summary": "", "source_links": []}
     )
@@ -66,6 +100,11 @@ class InputState:
     Whether the graph is being run from the web app using js.
     """
 
+    debug: Optional[bool] = False
+    """
+    Whether the graph is being run in debug mode.
+    """
+
 
 @dataclass(kw_only=True)
 class State(InputState):
@@ -74,8 +113,9 @@ class State(InputState):
     messages: Annotated[List[BaseMessage], add_messages] = field(default_factory=list)
     loop_step: int = 0
     market_data: Optional[dict[str, Any]] = None
+    tokens: Optional[List[Token]] = None
     research_report: Optional[dict[str, Any]] = None
-    trade_decision: Optional[str] = None
+    trade_decision: Optional[TradeDecision] = None
     user_confirmation: Optional[bool] = None  # Track user confirmation for trades
 
     # Additional fields for storing agent outputs
@@ -103,6 +143,21 @@ class State(InputState):
     """
 
 
+class OrderResponse(BaseModel):
+    """Represents the response from the order execution."""
+    errorMsg: str
+    """The error message from the order execution."""
+    orderID: str
+    """The order id from the order execution."""
+    takingAmount: str
+    """The amount of tokens taken from the order execution."""
+    makingAmount: str
+    """The amount of tokens made from the order execution."""
+    status: str
+    """The status of the order execution."""
+    transactionsHashes: List[str]
+    """The transactions hashes from the order execution."""
+
 @dataclass(kw_only=True)
 class OutputState:
     """This is the final output after the graph completes."""
@@ -111,4 +166,5 @@ class OutputState:
     research_report: dict[str, Any]
     analysis_info: dict[str, Any]
     trade_info: dict[str, Any]
+    order_response: OrderResponse
     confidence: float

@@ -144,6 +144,7 @@ class GenerateSerpQueries(BaseModel):
 
 async def generate_serp_queries(
     query: str,
+    main_question: str,
     num_queries: int = 3,
     learnings: Optional[List[str]] = None,
     *,
@@ -156,10 +157,12 @@ async def generate_serp_queries(
 
     date = datetime.now().strftime("%Y-%m-%d")
 
-    prompt = f"""The current date is {date}. Given the following prompt from the user, generate a list of SERP queries to research the topic.
+    prompt = f"""The current date is {date}. Given the following prompt from the user, generate a list of SERP queries to research the main research question.
 Return a maximum of {num_queries} queries. Each query should have:
 1. A search query string
 2. A detailed explanation of what we hope to learn from this query
+
+The research goal is to answer the question: <main_question>{main_question}</main_question>.
 
 Make sure each query is unique and targets a different aspect of the research:
 

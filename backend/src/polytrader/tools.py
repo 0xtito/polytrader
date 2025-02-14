@@ -26,7 +26,7 @@ from datetime import datetime
 from firecrawl import FirecrawlApp
 
 from polytrader.configuration import Configuration
-from polytrader.state import ResearchResult, State
+from polytrader.state import ResearchResult, State, TradeDecision
 from polytrader.gamma import GammaMarketClient
 from polytrader.polymarket import Polymarket
 from polytrader.utils import generate_serp_queries, init_model, process_serp_result, write_final_report
@@ -454,10 +454,17 @@ async def trade(
     market_id: Optional[str] = None,
     token_id: Optional[str] = None,
     size: Optional[float] = None,
+    outcome: Optional[str] = None,
     trade_evaluation_of_market_data: Optional[str] = None
 ) -> Dict[str, Any]:
     """Finalize a trade decision or do nothing."""
     logger.info("\n=== Trade Decision Analysis ===")
+
+    # Create TradeDecision object
+    try:
+        trade_decision_obj = TradeDecision(side=side, outcome=outcome)
+    except ValueError as e:
+        raise ValueError(f"Invalid trade decision: {str(e)}")
 
     # If side is NO_TRADE, do nothing but record the decision
     if side == "NO_TRADE":
@@ -467,16 +474,24 @@ async def trade(
             "reason": reason,
             "market_id": market_id,
             "token_id": token_id,
+            "outcome": outcome,
             "size": size if size is not None else 0,
             "trade_evaluation_of_market_data": trade_evaluation_of_market_data,
         }
-        state.trade_decision = side
+        state.trade_decision = trade_decision_obj
         state.confidence = confidence
         state.trade_info = trade_decision
         logger.info("Decision: NO_TRADE. Doing nothing.")
         return trade_decision
 
     # If side is BUY or SELL, proceed with normal logic
+    # Find the correct token based on the outcome
+    if state.tokens:
+        token = next((t for t in state.tokens if t.outcome == outcome), None)
+        if token:
+            token_id = token.token_id
+        else:
+            raise ValueError(f"No token found for outcome: {outcome}")
 
     trade_decision = {
         "side": side,
@@ -485,6 +500,7 @@ async def trade(
         "trade_evaluation_of_market_data": trade_evaluation_of_market_data,
         "market_id": market_id,
         "token_id": token_id,
+        "outcome": outcome,
         "size": size,
         "market_context": {
             "market_data": state.market_data,
@@ -494,13 +510,13 @@ async def trade(
         },
     }
 
-    # Update state
-    state.trade_decision = side
+    # Update state with the validated TradeDecision object
+    state.trade_decision = trade_decision_obj
     state.confidence = confidence
     state.trade_info = trade_decision
 
     # Log decision
-    logger.info(f"Trade Decision: {side}")
+    logger.info(f"Trade Decision: {trade_decision_obj}")
     logger.info(f"Confidence: {confidence}")
     logger.info(f"Reasoning: {reason}")
     logger.info(f"Market ID: {market_id}, Token ID: {token_id}, Size: {size}")
@@ -656,6 +672,7 @@ async def deep_research(
         # Generate SERP queries
         serp_queries = await generate_serp_queries(
             current_query,
+            main_question=state.market_data.get("question", ""),
             num_queries=breadth,
             learnings=learnings,
             config=config
