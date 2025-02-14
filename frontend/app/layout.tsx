@@ -5,6 +5,13 @@ import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
 import PrivyProvider from "@/components/providers/PrivyProvider";
 import Header from "@/components/header";
+import WagmiProviderWrapper from "@/components/providers/QueryClientWrapper";
+
+import { WagmiProvider } from "@privy-io/wagmi";
+import { headers } from "next/headers";
+import { cookieToInitialState } from "wagmi";
+
+import { wagmiConfig } from "@/lib/wagmiConfig";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -21,19 +28,26 @@ export const metadata: Metadata = {
   description: "Monitor and control the Polymarket AI Agent",
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const initialState = cookieToInitialState(
+    wagmiConfig,
+    (await headers()).get("cookie")
+  );
+
   return (
     <html lang="en">
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         <PrivyProvider>
-          <Header />
-          <main>{children}</main>
+          <WagmiProviderWrapper initialState={initialState}>
+            <Header />
+            <main>{children}</main>
+          </WagmiProviderWrapper>
         </PrivyProvider>
         <Toaster />
       </body>
