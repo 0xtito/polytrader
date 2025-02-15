@@ -964,6 +964,8 @@ Should this trade decision be accepted as final?"""
         size_val = trade_info.get("size", 0)
         outcome_val = trade_info.get("outcome")
 
+        available_funds = poly_client.get_usdc_balance()
+
         if side_val == "NO_TRADE" and size_val != 0:
             is_valid = False
             validation_errors.append("If side=NO_TRADE, size must be 0.")
@@ -985,9 +987,9 @@ Should this trade decision be accepted as final?"""
                     state.trade_info["token_id"] = token.token_id
 
         if side_val == "BUY":
-            if size_val is not None and size_val > state.available_funds:
+            if size_val is not None and size_val > available_funds:
                 is_valid = False
-                validation_errors.append(f"Cannot BUY with size {size_val} exceeding available funds {state.available_funds}.")
+                validation_errors.append(f"Cannot BUY with size {size_val} exceeding available funds {available_funds}.")
             
         if side_val == "SELL":
             if state.tokens and outcome_val:

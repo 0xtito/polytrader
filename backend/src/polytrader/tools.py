@@ -492,6 +492,8 @@ async def trade(
             token_id = token.token_id
         else:
             raise ValueError(f"No token found for outcome: {outcome}")
+        
+    available_funds = poly_client.get_usdc_balance()
 
     trade_decision = {
         "side": side,
@@ -506,7 +508,7 @@ async def trade(
             "market_data": state.market_data,
             "analysis_info": state.analysis_info,
             "positions": state.positions,
-            "available_funds": state.available_funds
+            "available_funds": available_funds
         },
     }
 
